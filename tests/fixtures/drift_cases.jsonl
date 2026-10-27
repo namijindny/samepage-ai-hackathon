@@ -1,0 +1,12 @@
+{"text":"I will finish on Monday. You'll need to add ₦40,000 for the extra work.","intent":"change_proposal","fields":["deadline","price"]}
+{"text":"I can complete this by Tuesday.","intent":"change_proposal","fields":["deadline"]}
+{"text":"The total is ₦160,000.","intent":"change_proposal","fields":["price"]}
+{"text":"Could we finish on Monday?","intent":"ambiguous","fields":[]}
+{"text":"What if the deadline changes to Sunday?","intent":"ambiguous","fields":[]}
+{"text":"Thank you for helping me today.","intent":"no_change","fields":[]}
+{"text":"I have received your message.","intent":"no_change","fields":[]}
+{"text":"My price was already fair.","intent":"no_change","fields":[]}
+{"text":"Please finish on Friday.","intent":"no_change","fields":[]}
+{"text":"Could we add ₦20,000?","intent":"ambiguous","fields":[]}
+{"text":"Please add ₦20,000 for extra materials.","intent":"change_proposal","fields":["price"]}
+{"text":"We must repair the engine carefully.","intent":"no_change","fields":[]}

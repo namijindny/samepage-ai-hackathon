@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Keep everyday agreements clear, review changes, and confirm decisions together.">
+  <title>SamePage — Clear agreements, together</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="SamePage home">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span></span>
+        <span>samepage<span class="brand-period">.</span></span>
+      </a>
+      <details class="preview-info" id="preview-info">
+        <summary id="analysis-status">Local preview</summary>
+        <div class="preview-popover" id="preview-description">This is a local demonstration. Both participants are simulated in this browser. Message checking uses a limited pattern detector, not AI.</div>
+      </details>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="notice hidden" id="notice" role="status" aria-live="polite"></div>
+
+    <section class="new-agreement" id="create-panel">
+      <div class="page-heading">
+        <h1>Make the terms clear.</h1>
+        <p>Agree on the details now, so you can stay on the same page later.</p>
+      </div>
+      <section class="surface form-surface" aria-labelledby="create-title">
+        <div class="section-heading">
+          <h2 id="create-title">New agreement</h2>
+          <p>Start with the details both people can review.</p>
+        </div>
+        <form id="create-form">
+          <label for="agreement-title">What is this agreement about?</label>
+          <input id="agreement-title" name="title" maxlength="100" required value="Vehicle repair agreement">
+          <div class="field-grid">
+            <div class="field"><label for="first-person">First person</label><input id="first-person" name="party_a" maxlength="70" required value="Amina"></div>
+            <div class="field"><label for="second-person">Second person</label><input id="second-person" name="party_b" maxlength="70" required value="Bello"></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label for="agreed-price">Total price</label><input id="agreed-price" name="price" maxlength="140" required value="₦120,000"></div>
+            <div class="field"><label for="agreed-deadline">Deadline</label><input id="agreed-deadline" name="deadline" maxlength="140" required value="Friday"></div>
+          </div>
+          <label for="agreed-scope">What's included?</label>
+          <textarea id="agreed-scope" name="scope" rows="3" maxlength="400" required>Repair vehicle engine</textarea>
+          <div class="form-actions"><button class="button button-primary" id="create-btn" type="submit">Create agreement <span aria-hidden="true">→</span></button></div>
+        </form>
+      </section>
+    </section>
+
+    <section id="studio" class="hidden" aria-label="Agreement workspace">
+      <div class="agreement-heading">
+        <div>
+          <div class="heading-overline">Agreement</div>
+          <h1 id="case-title">Agreement</h1>
+          <div class="agreement-detail" id="case-detail"></div>
+        </div>
+        <div class="heading-actions">
+          <button class="button button-primary hidden" type="button" id="view-document">View agreement</button>
+          <button class="button button-quiet" type="button" id="reset">New agreement <span aria-hidden="true">+</span></button>
+        </div>
+      </div>
+
+      <div class="workspace-grid">
+        <div class="workspace-column">
+          <section class="surface" aria-labelledby="terms-title">
+            <div class="section-heading heading-row">
+              <div><h2 id="terms-title">Current terms</h2><p id="version-text">Version 1</p></div>
+              <span class="status-chip status-pending" id="case-status">Awaiting confirmation</span>
+            </div>
+            <div class="terms-grid" id="terms"></div>
+            <div class="rule"></div>
+            <div class="confirmation-heading"><h3>Confirmation</h3><p>Both people need to approve these terms.</p></div>
+            <div id="approvals" class="approvals"></div>
+            <div class="confirmation-controls">
+              <div class="select-field"><label for="party-switch">Viewing as</label><select id="party-switch"><option value="a">Person A</option><option value="b">Person B</option></select></div>
+              <button class="button button-primary" id="confirm" type="button">Confirm terms</button>
+            </div>
+          </section>
+
+          <section class="surface" id="message-panel" aria-labelledby="message-title">
+            <div class="section-heading"><h2 id="message-title">Check a new message</h2><p>See whether it changes anything you've agreed.</p></div>
+            <form id="message-form">
+              <label for="incoming-message">Message</label>
+              <textarea id="incoming-message" name="message" rows="4" maxlength="2500" required>I will finish on Monday. You'll need to add ₦40,000 for the extra work.</textarea>
+              <div class="form-actions"><button class="button button-primary" id="analyze-btn" type="submit">Review message <span aria-hidden="true">→</span></button></div>
+            </form>
+            <div id="finding" class="result hidden" role="status" aria-live="polite"></div>
+          </section>
+        </div>
+
+        <div class="workspace-column">
+          <section class="surface" aria-labelledby="changes-title">
+            <div class="section-heading"><h2 id="changes-title">Changes</h2><p>Updates take effect only when both people approve.</p></div>
+            <div id="proposals"></div>
+          </section>
+          <section class="surface" aria-labelledby="activity-title">
+            <div class="section-heading"><h2 id="activity-title">Activity</h2></div>
+            <div id="history" class="activity-list"></div>
+            <button class="text-button hidden" type="button" id="history-toggle">Show all activity</button>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section id="document-view" class="document-view hidden" aria-label="Approved agreement">
+      <div class="document-toolbar">
+        <button type="button" class="text-button" id="document-back">← Back to agreement</button>
+        <div class="document-actions">
+          <div class="select-field"><label for="document-version">Version</label><select id="document-version"></select></div>
+          <button class="button button-primary" type="button" id="document-print">Print / Save PDF</button>
+        </div>
+      </div>
+      <article class="agreement-paper" id="agreement-paper">
+        <div class="paper-heading">
+          <div class="paper-brand">samepage<span class="brand-period">.</span></div>
+          <span id="document-state">Approved agreement</span>
+        </div>
+        <h1 id="document-title"></h1>
+        <p id="document-summary" class="paper-summary"></p>
+        <dl class="paper-meta" id="document-meta"></dl>
+        <h2>Agreed terms</h2>
+        <dl class="paper-terms" id="document-terms"></dl>
+        <h2>Confirmed by</h2>
+        <div class="paper-signoffs" id="document-signoffs"></div>
+        <div class="paper-footnote">This record reflects approvals captured within SamePage. It does not constitute a verified identity check, qualified digital signature or certification of legal enforceability.</div>
+      </article>
+    </section>
+  </main>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
