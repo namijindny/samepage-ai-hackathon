@@ -19,10 +19,14 @@ def approved_documents(db, case):
 
     created = json.loads(initial["payload_json"])
     original_approvals = {}
+    original_terms = created["terms"]
     revisions = []
     for event in events:
         details = json.loads(event["payload_json"])
-        if event["event"] == "initial_confirmed" and details["version"] == 1:
+        if event["event"] == "counteroffer_sent":
+            original_terms = details["terms"]
+            original_approvals = {}
+        elif event["event"] == "initial_confirmed" and details["version"] == 1:
             original_approvals[details["party"]] = event["created_at"]
         elif event["event"] == "new_version_applied":
             proposal_id = details["proposal"]
@@ -47,7 +51,7 @@ def approved_documents(db, case):
 
     documents = [{
         "version": 1,
-        "terms": created["terms"],
+        "terms": original_terms,
         "approved_at": max(original_approvals.values()),
         "approvals": original_approvals,
     }, *revisions]
@@ -61,6 +65,8 @@ def approved_documents(db, case):
             "title": case["title"],
             "party_a": case["party_a"],
             "party_b": case["party_b"],
+            "initiator": case["party_a"],
+            "recipient": case["party_b"],
             "current": item["version"] == case["version"],
         })
     return documents

@@ -59,6 +59,25 @@ def initialize():
             created_at TEXT NOT NULL, prev_hash TEXT NOT NULL, hash TEXT NOT NULL
         );
         """)
+        columns = {row['name'] for row in db.execute('PRAGMA table_info(cases)')}
+        if 'responsible_party' not in columns:
+            db.execute("ALTER TABLE cases ADD COLUMN responsible_party TEXT NOT NULL DEFAULT 'b'")
+        if 'declined_at' not in columns:
+            db.execute('ALTER TABLE cases ADD COLUMN declined_at TEXT')
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS completion (
+                case_id TEXT PRIMARY KEY REFERENCES cases(id),
+                version INTEGER NOT NULL,
+                submitted_by TEXT NOT NULL,
+                submitted_at TEXT NOT NULL,
+                statement TEXT NOT NULL,
+                reference TEXT,
+                status TEXT NOT NULL DEFAULT 'submitted',
+                reviewed_by TEXT,
+                reviewed_at TEXT,
+                review_note TEXT
+            )
+        """)
 
 
 def new_id() -> str:

@@ -6,6 +6,36 @@ A two-party, versioned agreement experience. It can propose changes extracted fr
 
 > **Important:** The default `offline_demo` analyzer is a **limited deterministic pattern demonstrator, not Meta AI**. It recognizes a small illustrative set of weekday and NGN-price modifications. Enable `ANALYSIS_MODE=meta` with valid credits and a Meta Model API key to use Muse Spark 1.3. The Meta-backed path is implemented but **has not been live-tested without access to your account/credits**. We do not silently fall back to rules if a paid AI call fails.
 
+## Meta agreement intelligence (v0.4)
+
+The new `app/engine.py` implementation requests **schema-constrained results** from `muse-spark-1.3` (Standard mode). It distinguishes proposals, questions, conditions, rejections, withdrawals, and ordinary messages. Only clear change proposals reach the approval screen. Evidence quotes must be literal substrings of the source message. Price additions and reductions are independently calculated in Python, not trusted from the model output. Changes still require both parties to approve and never alter earlier versions.
+
+The implementation was tested against a mocked Meta API response, but **no live Meta API call was made as part of this package**. To test it locally, use sample data until you've confirmed billing and the free credits are active.
+
+### Start with Meta AI without saving a key to disk
+
+Close the current local server with Ctrl+C. From the project folder, run:
+
+```powershell
+uv run --python 3.13 --with-requirements requirements.txt python scripts/run_meta.py
+```
+
+When prompted, paste your Meta API key. The input is hidden and is only passed to the local server process; don't paste it in chat, screenshots, GitHub or `.env`. Open http://127.0.0.1:8000 and try one fictional example. The key is not stored by the launcher. The billing account must be unrestricted for API calls to succeed. To return to offline preview, stop this server and use your original `uv run ... uvicorn ...` command.
+
+The default local allowance is **10 API attempts per UTC day**, with no automatic retries. `MAX_META_CALLS_PER_DAY` can be adjusted from 1 to 200. This is a *request counter*, **not a guaranteed monetary spending cap**. Monitor Meta's Billing page and never assume the $150 credit automatically prevents further charges.
+
+### Testing
+
+Run all offline tests with:
+
+```powershell
+uv run --python 3.13 --with-requirements requirements.txt python -m pytest -q
+```
+
+A labeled development set of 22 messages is included in `tests/fixtures/semantic_cases.jsonl`. See `scripts/evaluate_meta.py` for an explicit opt-in live evaluator (it will make paid API calls only with `--live`). The development set is intentionally small and cannot establish production reliability or a competitive advantage by itself.
+
+**Security:** The browser's participant switcher still holds both sample participant keys in local storage. The app is for localhost demos only and must not be exposed to real people until separate authentication, secure invitations, privacy controls and production hardening are implemented. Do not upload real conversations while testing.
+
 ## Approved agreement documents (v0.3)
 
 After both participants confirm, choose **View agreement** in the workspace. The document includes the current terms, reference, version and individual confirmation timestamps. Use **Print / Save PDF** to save or print the confirmed version. You may switch to earlier versions after an amendment; earlier approved terms are preserved from the agreement event history.
@@ -125,3 +155,13 @@ The intended hackathon demonstration must **clearly disclose the analysis mode**
 Use the **Source Control** icon in VS Code and select **Initialize Repository**. Review `.gitignore` first; it excludes local `data/`, `.env`, cache files and `.venv`. Stage the source files, commit with a meaningful message such as `Build SamePage agreement workflows`, then choose **Publish to GitHub** and select **Public**. Authorize VS Code when prompted.
 
 Do not upload your SQLite database, API keys, actual users' conversations, or any private documents. A public repository is a requirement for the competition but does not make this local demo safe to deploy publicly.
+
+## Agreement lifecycle update (v0.5)
+
+The workflow now identifies the initiator and recipient. The initiator sends the initial offer and shares a private invitation link. The recipient accepts, declines, or sends a counteroffer. Once accepted, either participant can propose a manual amendment without Meta AI; both must still approve model-suggested amendments. The delivery-responsible participant can submit a completion statement and supporting reference, and the other participant reviews or disputes it.
+
+The agreement document now distinguishes the original agreement from accepted revisions. This update migrates the existing SQLite schema without deleting previously created records.
+
+See [Product workflow](docs/product-workflow.md) for permitted transitions, security limitations, and the difference between deterministic processing and Meta AI.
+
+**Upgrade existing installations:** Extract the incremental update into the project root, replacing files inside `app`, `web`, `tests`, and `docs`. Keep your existing `data` folder. Restart the server with your usual `uv run` command. Do not upload `data`, `.env`, API keys, or access links to GitHub.

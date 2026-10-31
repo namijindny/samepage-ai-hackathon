@@ -15,7 +15,7 @@
         <span>samepage<span class="brand-period">.</span></span>
       </a>
       <details class="preview-info" id="preview-info">
-        <summary id="analysis-status">Local preview</summary>
+        <summary id="analysis-status">About</summary>
         <div class="preview-popover" id="preview-description">This is a local demonstration. Both participants are simulated in this browser. Message checking uses a limited pattern detector, not AI.</div>
       </details>
     </div>
@@ -36,18 +36,22 @@
         </div>
         <form id="create-form">
           <label for="agreement-title">What is this agreement about?</label>
-          <input id="agreement-title" name="title" maxlength="100" required value="Vehicle repair agreement">
+          <input id="agreement-title" name="title" maxlength="100" required placeholder="e.g. Website development">
           <div class="field-grid">
-            <div class="field"><label for="first-person">First person</label><input id="first-person" name="party_a" maxlength="70" required value="Amina"></div>
-            <div class="field"><label for="second-person">Second person</label><input id="second-person" name="party_b" maxlength="70" required value="Bello"></div>
+            <div class="field"><label for="first-person">Your name (initiator)</label><input id="first-person" name="party_a" maxlength="70" required placeholder="Your full name"></div>
+            <div class="field"><label for="second-person">Recipient’s name</label><input id="second-person" name="party_b" maxlength="70" required placeholder="Other participant’s name"></div>
           </div>
           <div class="field-grid">
-            <div class="field"><label for="agreed-price">Total price</label><input id="agreed-price" name="price" maxlength="140" required value="₦120,000"></div>
-            <div class="field"><label for="agreed-deadline">Deadline</label><input id="agreed-deadline" name="deadline" maxlength="140" required value="Friday"></div>
+            <div class="field"><label for="agreed-price">Total price</label><input id="agreed-price" name="price" maxlength="140" required placeholder="₦120,000"></div>
+            <div class="field"><label for="agreed-deadline">Deadline</label><input id="agreed-deadline" name="deadline" maxlength="140" required placeholder="e.g. 15 November 2026"></div>
           </div>
           <label for="agreed-scope">What's included?</label>
-          <textarea id="agreed-scope" name="scope" rows="3" maxlength="400" required>Repair vehicle engine</textarea>
-          <div class="form-actions"><button class="button button-primary" id="create-btn" type="submit">Create agreement <span aria-hidden="true">→</span></button></div>
+          <textarea id="agreed-scope" name="scope" rows="3" maxlength="400" required placeholder="Describe what will be delivered"></textarea>
+          <div class="field">
+            <label for="responsible-party">Who is responsible for delivering?</label>
+            <select id="responsible-party" name="responsible_party"><option value="b">The recipient</option><option value="a">Me, the initiator</option></select>
+          </div>
+          <div class="form-actions"><button class="button button-primary" id="create-btn" type="submit">Send agreement <span aria-hidden="true">→</span></button></div>
         </form>
       </section>
     </section>
@@ -65,31 +69,69 @@
         </div>
       </div>
 
+      <div id="stage-summary" class="stage-summary" role="status"></div>
+      <div id="invitation" class="invitation hidden"><span>Share this private invitation with the recipient to review your offer.</span><button type="button" id="copy-invitation" class="button button-secondary">Copy invitation link</button></div>
       <div class="workspace-grid">
         <div class="workspace-column">
           <section class="surface" aria-labelledby="terms-title">
             <div class="section-heading heading-row">
-              <div><h2 id="terms-title">Current terms</h2><p id="version-text">Version 1</p></div>
+              <div><h2 id="terms-title">Agreed terms</h2><p id="version-text"></p></div>
               <span class="status-chip status-pending" id="case-status">Awaiting confirmation</span>
             </div>
             <div class="terms-grid" id="terms"></div>
             <div class="rule"></div>
-            <div class="confirmation-heading"><h3>Confirmation</h3><p>Both people need to approve these terms.</p></div>
+            <div class="confirmation-heading"><h3>Approval</h3><p id="confirmation-help">The recipient can review the initiator’s offer.</p></div>
             <div id="approvals" class="approvals"></div>
             <div class="confirmation-controls">
-              <div class="select-field"><label for="party-switch">Viewing as</label><select id="party-switch"><option value="a">Person A</option><option value="b">Person B</option></select></div>
-              <button class="button button-primary" id="confirm" type="button">Confirm terms</button>
+              <div class="select-field" id="party-selector"><label for="party-switch">Local preview as</label><select id="party-switch"><option value="a">Person A</option><option value="b">Person B</option></select></div><p class="access-role hidden" id="access-role"></p>
+              <button class="button button-primary" id="confirm" type="button">Accept agreement</button>
+              <button class="button button-secondary hidden" id="decline" type="button">Decline</button>
             </div>
+            <div id="decline-panel" class="inline-details hidden">
+              <form id="decline-form" class="nested-form">
+                <label for="decline-reason">Reason for declining</label>
+                <textarea id="decline-reason" name="message" rows="2" minlength="3" maxlength="2500" placeholder="Let the initiator know why" required></textarea>
+                <div class="form-actions"><button class="button button-secondary" type="submit">Confirm decline</button></div>
+              </form>
+            </div>
+            <details id="counter-panel" class="inline-details hidden">
+              <summary>Suggest different terms</summary>
+              <form id="counter-form" class="nested-form">
+                <div class="field-grid">
+                  <div class="field"><label for="counter-price">Price</label><input id="counter-price" name="price" required></div>
+                  <div class="field"><label for="counter-deadline">Deadline</label><input id="counter-deadline" name="deadline" required></div>
+                </div>
+                <label for="counter-scope">What's included?</label><textarea id="counter-scope" name="scope" rows="3" required></textarea>
+                <label for="counter-note">Reason (optional)</label><input id="counter-note" name="note" maxlength="500" placeholder="Explain what you want changed">
+                <div class="form-actions"><button class="button button-primary" type="submit">Send counteroffer</button></div>
+              </form>
+            </details>
           </section>
 
           <section class="surface" id="message-panel" aria-labelledby="message-title">
             <div class="section-heading"><h2 id="message-title">Check a new message</h2><p>See whether it changes anything you've agreed.</p></div>
             <form id="message-form">
               <label for="incoming-message">Message</label>
-              <textarea id="incoming-message" name="message" rows="4" maxlength="2500" required>I will finish on Monday. You'll need to add ₦40,000 for the extra work.</textarea>
+              <textarea id="incoming-message" name="message" rows="4" maxlength="2500" required placeholder="Paste the message you want to review"></textarea>
               <div class="form-actions"><button class="button button-primary" id="analyze-btn" type="submit">Review message <span aria-hidden="true">→</span></button></div>
             </form>
             <div id="finding" class="result hidden" role="status" aria-live="polite"></div>
+            <details class="inline-details" id="manual-panel">
+              <summary>Propose changes without AI</summary>
+              <form id="manual-form" class="nested-form">
+                <div class="field-grid">
+                  <div class="field"><label for="manual-price">Price</label><input id="manual-price" name="price" required></div>
+                  <div class="field"><label for="manual-deadline">Deadline</label><input id="manual-deadline" name="deadline" required></div>
+                </div>
+                <label for="manual-scope">What's included?</label><textarea id="manual-scope" name="scope" rows="3" required></textarea>
+                <label for="manual-reason">Reason (optional)</label><input id="manual-reason" name="reason" maxlength="500" placeholder="What changed and why?">
+                <div class="form-actions"><button class="button button-primary" type="submit">Send proposed changes</button></div>
+              </form>
+            </details>
+          </section>
+          <section class="surface" id="completion-panel" aria-labelledby="completion-title">
+            <div class="section-heading"><h2 id="completion-title">Delivery</h2><p id="delivery-help">Keep a record of what was delivered and whether it was accepted.</p></div>
+            <div id="completion-content"></div>
           </section>
         </div>
 
@@ -111,7 +153,7 @@
       <div class="document-toolbar">
         <button type="button" class="text-button" id="document-back">← Back to agreement</button>
         <div class="document-actions">
-          <div class="select-field"><label for="document-version">Version</label><select id="document-version"></select></div>
+          <div class="select-field"><label for="document-version">Agreement record</label><select id="document-version"></select></div>
           <button class="button button-primary" type="button" id="document-print">Print / Save PDF</button>
         </div>
       </div>
@@ -125,8 +167,9 @@
         <dl class="paper-meta" id="document-meta"></dl>
         <h2>Agreed terms</h2>
         <dl class="paper-terms" id="document-terms"></dl>
-        <h2>Confirmed by</h2>
+        <h2>Accepted by</h2>
         <div class="paper-signoffs" id="document-signoffs"></div>
+        <div class="paper-delivery" id="document-delivery"></div>
         <div class="paper-footnote">This record reflects approvals captured within SamePage. It does not constitute a verified identity check, qualified digital signature or certification of legal enforceability.</div>
       </article>
     </section>

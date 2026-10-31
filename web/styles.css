@@ -188,3 +188,34 @@ form > input, form > textarea { margin-bottom: 18px; }
   .paper-meta, .paper-terms, .paper-signoffs { break-inside: avoid; }
   .paper-footnote { margin-top: 36px; }
 }
+
+.change-evidence { margin-top: 6px; font-size: 12px; line-height: 1.5; color: #697586; }
+
+.stage-summary { display:flex; flex-direction:column; gap:5px; background:#eef4ff; border:1px solid #dce6f6; border-radius:12px; padding:15px 20px; margin-bottom:22px; }
+.stage-summary strong { font-size:14px; color:#203454; }
+.stage-summary span { color:#576b82; font-size:13px; line-height:1.5; }
+.inline-details { margin-top:22px; border-top:1px solid var(--line); padding-top:18px; }
+.inline-details summary { cursor:pointer; font-weight:650; font-size:13px; color:var(--accent); list-style-position:inside; }
+.nested-form { margin-top:18px; }
+.nested-form > input, .nested-form > textarea { margin-bottom:18px; }
+.nested-form > label { margin-top:12px; }
+.delivery-record { border:1px solid var(--line); background:#fafbfc; padding:16px; border-radius:10px; }
+.delivery-record strong { font-size:13px; }
+.delivery-record p { font-size:13px; line-height:1.55; overflow-wrap:anywhere; }
+.muted-copy { font-size:13px; line-height:1.6; color:var(--muted); }
+.delivery-outcome { margin:16px 0 0; color:var(--success); font-weight:700; font-size:13px; }
+.paper-delivery { margin-top:32px; padding-top:24px; border-top:1px solid var(--line); }
+.paper-delivery p { overflow-wrap:anywhere; }
+@media(max-width:620px) {
+  .stage-summary { padding:14px 16px; }
+  .confirmation-controls .button { flex:1; }
+}
+@media print {
+  .stage-summary, .inline-details { display:none!important; }
+  .paper-delivery { break-inside:avoid; }
+}
+
+.invitation { display:flex; gap:16px; align-items:center; justify-content:space-between; margin:-5px 0 22px; padding:14px 18px; border:1px solid #d4e5ef; border-radius:11px; background:#f8fbfd; }
+.invitation span { font-size:13px; color:#39566d; }
+.access-role { margin:0; color:#5e7083; font-size:12px; line-height:1.5; }
+@media(max-width:620px) { .invitation { flex-direction:column; align-items:stretch; } }

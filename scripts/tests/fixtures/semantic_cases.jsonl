@@ -1,0 +1,22 @@
+{"message": "I will finish on Monday.", "expected_intent": "change_proposal", "expected_fields": ["deadline"]}
+{"message": "Please add ₦40,000 to the agreed price.", "expected_intent": "change_proposal", "expected_fields": ["price"]}
+{"message": "The new total will be ₦160,000.", "expected_intent": "change_proposal", "expected_fields": ["price"]}
+{"message": "Please finish by Tuesday and add ₦10,000.", "expected_intent": "change_proposal", "expected_fields": ["deadline", "price"]}
+{"message": "The final price is ₦100,000.", "expected_intent": "change_proposal", "expected_fields": ["price"]}
+{"message": "Reduce the total price by ₦10,000.", "expected_intent": "change_proposal", "expected_fields": ["price"]}
+{"message": "I will finish on Saturday rather than Friday.", "expected_intent": "change_proposal", "expected_fields": ["deadline"]}
+{"message": "We should replace the engine repair with a gearbox repair.", "expected_intent": "change_proposal", "expected_fields": ["scope"]}
+{"message": "Could we finish by Tuesday?", "expected_intent": "question", "expected_fields": []}
+{"message": "What if we add ₦40,000?", "expected_intent": "question", "expected_fields": []}
+{"message": "Would you agree to a Monday deadline?", "expected_intent": "question", "expected_fields": []}
+{"message": "If the parts arrive this week, I can finish on Monday.", "expected_intent": "conditional", "expected_fields": []}
+{"message": "The new price will be ₦160,000 if spare parts cost more.", "expected_intent": "conditional", "expected_fields": []}
+{"message": "Maybe I will finish next week.", "expected_intent": "ambiguous", "expected_fields": []}
+{"message": "I am not sure if we need to change the price.", "expected_intent": "ambiguous", "expected_fields": []}
+{"message": "I reject the proposed extra ₦40,000.", "expected_intent": "rejection", "expected_fields": []}
+{"message": "I cannot accept Monday as the deadline.", "expected_intent": "rejection", "expected_fields": []}
+{"message": "I withdraw my earlier request to raise the price by ₦40,000.", "expected_intent": "withdrawal", "expected_fields": []}
+{"message": "Please ignore my proposal to move the deadline to Tuesday.", "expected_intent": "withdrawal", "expected_fields": []}
+{"message": "I accept your proposed price change.", "expected_intent": "no_change", "expected_fields": []}
+{"message": "The original Friday deadline still works for me.", "expected_intent": "no_change", "expected_fields": []}
+{"message": "Good morning, thank you for confirming.", "expected_intent": "no_change", "expected_fields": []}
