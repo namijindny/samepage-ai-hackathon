@@ -64,6 +64,35 @@ def initialize():
             db.execute("ALTER TABLE cases ADD COLUMN responsible_party TEXT NOT NULL DEFAULT 'b'")
         if 'declined_at' not in columns:
             db.execute('ALTER TABLE cases ADD COLUMN declined_at TEXT')
+        if 'offer_by' not in columns:
+            db.execute("ALTER TABLE cases ADD COLUMN offer_by TEXT NOT NULL DEFAULT 'a'")
+            db.execute("UPDATE cases SET offer_by='b' WHERE a_confirmed=0 AND b_confirmed=1")
+        if 'offer_revision' not in columns:
+            db.execute('ALTER TABLE cases ADD COLUMN offer_revision INTEGER NOT NULL DEFAULT 0')
+            db.execute('''UPDATE cases SET offer_revision=(
+                SELECT COUNT(*) FROM audit WHERE case_id=cases.id AND event='counteroffer_sent'
+            )''')
+        if 'offer_note' not in columns:
+            db.execute("ALTER TABLE cases ADD COLUMN offer_note TEXT NOT NULL DEFAULT ''")
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS clarity_checks (
+                case_id TEXT NOT NULL REFERENCES cases(id),
+                revision INTEGER NOT NULL,
+                requested_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (case_id, revision)
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS clarity_answers (
+                case_id TEXT NOT NULL REFERENCES cases(id),
+                revision INTEGER NOT NULL,
+                party TEXT NOT NULL CHECK(party IN ('a','b')),
+                answers_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (case_id,revision,party)
+            )
+        """)
         db.execute("""
             CREATE TABLE IF NOT EXISTS completion (
                 case_id TEXT PRIMARY KEY REFERENCES cases(id),

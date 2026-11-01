@@ -18,6 +18,12 @@ class Finding:
     mode: str
 
 
+class MetaResponseError(ValueError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 def demo_detect(message: str, current: dict[str, str]) -> Finding:
     msg = message.strip()
     low = msg.lower()
@@ -189,12 +195,27 @@ def _meta_detect(message: str, current: dict[str, str]) -> Finding:
             {"role": "user", "content": json.dumps({"current_terms": current, "incoming_message": message}, ensure_ascii=False)},
         ],
         response_format=SCHEMA,
-        max_completion_tokens=650,
+        reasoning_effort="low",
+        max_completion_tokens=2500,
     )
-    answer = response.choices[0].message.content
-    if not answer:
-        raise ValueError("Meta returned an empty response")
-    return validate_response(json.loads(answer), message, current)
+    if not response.choices:
+        raise MetaResponseError("missing_choice")
+    choice = response.choices[0]
+    if getattr(choice, "finish_reason", None) == "length":
+        raise MetaResponseError("output_limit")
+    answer = getattr(choice.message, "content", None)
+    if not isinstance(answer, str) or not answer.strip():
+        raise MetaResponseError("empty_content")
+    try:
+        data = json.loads(answer)
+    except json.JSONDecodeError as error:
+        raise MetaResponseError("invalid_json") from error
+    if not isinstance(data, dict):
+        raise MetaResponseError("unexpected_shape")
+    try:
+        return validate_response(data, message, current)
+    except (ValueError, TypeError, KeyError) as error:
+        raise MetaResponseError("invalid_content") from error
 
 
 def detect(message: str, current: dict[str, str]) -> Finding:

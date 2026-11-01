@@ -9,6 +9,15 @@ const elements = {
   version: document.querySelector('#version-text'),
   status: document.querySelector('#case-status'),
   terms: document.querySelector('#terms'),
+  termsTitle: document.querySelector('#terms-title'),
+  offerReview: document.querySelector('#offer-review'),
+  understandingPanel: document.querySelector('#understanding-panel'),
+  understandingRequest: document.querySelector('#understanding-request'),
+  understandingForm: document.querySelector('#understanding-form'),
+  understandingEdit: document.querySelector('#understanding-edit'),
+  understandingUseOffer: document.querySelector('#understanding-use-offer'),
+  understandingProgress: document.querySelector('#understanding-progress'),
+  understandingResult: document.querySelector('#understanding-result'),
   partySwitch: document.querySelector('#party-switch'),
   confirmations: document.querySelector('#approvals'),
   confirmButton: document.querySelector('#confirm'),
@@ -65,7 +74,10 @@ const eventNames = {
   delivery_submitted: 'Delivery submitted',
   delivery_accepted: 'Delivery accepted',
   delivery_disputed: 'Delivery disputed',
-  delivery_resubmitted: 'Delivery resubmitted' 
+  delivery_resubmitted: 'Delivery resubmitted',
+  understanding_requested: 'Understanding check requested',
+  understanding_submitted: 'Understanding shared',
+  understanding_aligned: 'Terms understood by both' 
 };
 
 let savedAccess = null;
@@ -73,6 +85,8 @@ let agreement = null;
 let selectedParty = 'a';
 let showAllHistory = false;
 let invitationLink = null;
+let editUnderstanding = false;
+let understandingRevision = null;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -90,12 +104,17 @@ function clearNotice() {
 }
 
 function readSavedAccess() {
-  try { return JSON.parse(localStorage.getItem(storageKey) || 'null'); }
-  catch { return null; }
+  try {
+    return JSON.parse(sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey) || 'null');
+  } catch {
+    return null;
+  }
 }
 
 function saveAccess() {
-  localStorage.setItem(storageKey, JSON.stringify(savedAccess));
+  sessionStorage.setItem(storageKey, JSON.stringify(savedAccess));
+  const previous = localStorage.getItem(storageKey);
+  if (selectedParty === 'a' || !previous) localStorage.setItem(storageKey, JSON.stringify(savedAccess));
 }
 
 async function request(path, method = 'GET', payload) {
@@ -125,7 +144,7 @@ function approvalLabel(name, isConfirmed) {
 
 const statusLabels = {
   awaiting_recipient: 'Awaiting recipient',
-  awaiting_initiator: 'Review counteroffer',
+  awaiting_initiator: 'Waiting for initiator',
   declined: 'Declined',
   in_progress: 'In progress',
   awaiting_completion_review: 'Review delivery',
@@ -140,13 +159,79 @@ function setFormTerms(form, values) {
   }
 }
 
+function understandingStatus(check) {
+  if (!check?.requested) return null;
+  const other = selectedParty === 'a' ? 'b' : 'a';
+  if (check.state === 'awaiting_you') {
+    return `${personName(other)} has ${check.submitted[other] ? 'submitted a response' : 'not yet submitted'}. Your understanding is needed before approval.`;
+  }
+  if (check.state === 'awaiting_other') {
+    return `Your response is saved. Waiting for ${personName(other)} to submit their understanding from their own invitation.`;
+  }
+  if (check.state === 'differences') {
+    return 'Both responses are in, but some details differ from the proposed agreement. Review the differences below.';
+  }
+  return 'Both people understand the proposed terms. The person reviewing the offer may now accept it.';
+}
+
+function renderUnderstanding() {
+  const pending = ['awaiting_recipient', 'awaiting_initiator'].includes(agreement.status);
+  const check = agreement.understanding;
+  elements.understandingPanel.classList.toggle('hidden', !pending);
+  if (!pending || !check) return;
+  if (understandingRevision !== check.revision) {
+    understandingRevision = check.revision;
+    editUnderstanding = false;
+    delete elements.understandingForm.dataset.dirty;
+  }
+  const submitted = check.submitted[selectedParty];
+  const editing = check.requested && !check.ready && (!submitted || check.state === 'differences' || editUnderstanding);
+  elements.understandingRequest.classList.toggle('hidden', check.requested);
+  elements.understandingProgress.classList.toggle('hidden', !check.requested);
+  elements.understandingForm.classList.toggle('hidden', !editing);
+  elements.understandingEdit.classList.toggle('hidden', !check.requested || !submitted || check.ready || editing);
+  elements.understandingResult.classList.add('hidden');
+  if (!check.requested) return;
+  elements.understandingProgress.textContent = understandingStatus(check);
+  if (!elements.understandingForm.dataset.dirty) {
+    setFormTerms(elements.understandingForm, check.mine || {price: '', deadline: '', scope: ''});
+  }
+  if (check.state === 'aligned') {
+    elements.understandingResult.classList.remove('hidden');
+    elements.understandingResult.innerHTML = '<strong>Understanding confirmed</strong><p>You can now respond to the offer. Its terms will remain unchanged until you explicitly accept.</p>';
+    return;
+  }
+  if (check.state !== 'differences') return;
+  const differences = check.checks.filter(item => !item.matches);
+  const differencesHtml = differences.map(item => `
+    <div class="understanding-difference">
+      <strong>${escapeHtml(fieldNames[item.field])}</strong>
+      <p>Proposed terms: ${escapeHtml(item.agreed)}</p>
+      <p>${escapeHtml(agreement.party_a)}: ${escapeHtml(item.a)}${item.a_matches_offer ? ' ✓' : ' — different'}</p>
+      <p>${escapeHtml(agreement.party_b)}: ${escapeHtml(item.b)}${item.b_matches_offer ? ' ✓' : ' — different'}</p>
+    </div>`).join('');
+  elements.understandingResult.classList.remove('hidden');
+  elements.understandingResult.innerHTML = `<strong>${differences.length} detail${differences.length === 1 ? '' : 's'} need clarification</strong>
+    <p>The wording must match the offer for this preliminary check. If the intended scope is different, request a counteroffer that states the actual work clearly. Different paraphrases are not automatically considered equivalent.</p>${differencesHtml}`;
+}
+
 function renderTerms() {
   const terms = agreement.terms;
+  const awaitingReview = ['awaiting_recipient', 'awaiting_initiator'].includes(agreement.status);
+  const reviewer = agreement.offer_by === 'a' ? 'b' : 'a';
+  const isReviewer = awaitingReview && selectedParty === reviewer;
+  const offererName = personName(agreement.offer_by);
+  const reviewerName = personName(reviewer);
+  const canAct = isReviewer && !agreement[`${selectedParty}_confirmed`];
+
+  elements.termsTitle.textContent = awaitingReview ? 'Proposed terms' : 'Agreed terms';
   elements.terms.innerHTML = Object.entries(fieldNames).map(([key, label]) => `
     <div class="term"><span class="term-label">${label}</span><div class="term-value">${escapeHtml(terms[key])}</div></div>
   `).join('');
 
-  elements.version.textContent = agreement.version === 1 ? 'Original agreement' : `Revised ${agreement.version - 1} time${agreement.version > 2 ? 's' : ''}`;
+  elements.version.textContent = awaitingReview
+    ? (agreement.offer_revision ? `Counteroffer ${agreement.offer_revision}` : 'Initial offer')
+    : (agreement.version === 1 ? 'Original agreement' : `Amendment ${agreement.version - 1}`);
   elements.status.textContent = statusLabels[agreement.status] || 'Pending';
   elements.status.className = `status-chip ${agreement.active && agreement.status !== 'disputed' ? 'status-confirmed' : 'status-pending'}`;
   elements.confirmations.innerHTML = approvalLabel(`${agreement.party_a} · Initiator`, agreement.a_confirmed)
@@ -157,45 +242,105 @@ function renderTerms() {
   elements.partySelector.classList.toggle('hidden', !localSwitcher);
   elements.accessRole.classList.toggle('hidden', localSwitcher);
   elements.accessRole.textContent = `Accessing as ${personName(selectedParty)} · ${selectedParty === 'a' ? 'Initiator' : 'Recipient'}`;
-  elements.invitation.classList.toggle('hidden', !invitationLink || agreement.status !== 'awaiting_recipient');
+  elements.invitation.classList.toggle('hidden', !invitationLink || !awaitingReview || agreement.offer_by !== 'a');
 
-  const needsConfirmation = !agreement.active && agreement.status !== 'declined';
-  const hasApproved = selectedParty === 'a' ? agreement.a_confirmed : agreement.b_confirmed;
-  elements.confirmButton.classList.toggle('hidden', !needsConfirmation);
-  elements.confirmButton.disabled = hasApproved || !needsConfirmation;
-  elements.confirmButton.textContent = selectedParty === 'a' ? 'Accept counteroffer' : 'Accept agreement';
-  elements.declineButton.classList.toggle('hidden', !(agreement.status === 'awaiting_recipient' && selectedParty === 'b'));
-  if (agreement.status !== 'awaiting_recipient') elements.declinePanel.classList.add('hidden');
-  elements.counterPanel.classList.toggle('hidden', !(agreement.status === 'awaiting_recipient' && selectedParty === 'b'));
+  elements.confirmButton.classList.toggle('hidden', !canAct);
+  elements.confirmButton.disabled = !canAct || (agreement.understanding?.requested && !agreement.understanding.ready);
+  elements.confirmButton.textContent = agreement.offer_revision ? 'Accept counteroffer' : 'Accept agreement';
+  elements.declineButton.classList.toggle('hidden', !canAct);
+  if (!canAct) elements.declinePanel.classList.add('hidden');
+  elements.counterPanel.classList.toggle('hidden', !canAct);
   if (!elements.counterPanel.open) setFormTerms(elements.counterForm, terms);
-  setFormTerms(elements.manualForm, terms);
+  if (!elements.manualPanel.open) setFormTerms(elements.manualForm, terms);
   elements.viewDocument.classList.toggle('hidden', !agreement.active);
+
+  const showChanges = awaitingReview && agreement.offer_revision > 0;
+  elements.offerReview.classList.toggle('hidden', !showChanges);
+  if (showChanges) {
+    const changes = agreement.offer_changes.map(change => `
+      <div class="offer-difference"><span>${escapeHtml(fieldNames[change.field] || change.field)}</span>
+        <div><del>${escapeHtml(change.old_value)}</del><span aria-hidden="true">→</span><strong>${escapeHtml(change.new_value)}</strong></div>
+      </div>`).join('');
+    elements.offerReview.innerHTML = `<strong>Changes suggested by ${escapeHtml(offererName)}</strong>${changes}
+      ${agreement.offer_note ? `<p>${escapeHtml(agreement.offer_note)}</p>` : ''}`;
+  }
 
   const editable = agreement.status === 'in_progress';
   elements.analyzeButton.disabled = !editable;
   elements.messageForm.elements.message.disabled = !editable;
   elements.manualPanel.classList.toggle('hidden', !editable);
-  elements.confirmationHelp.textContent = agreement.status === 'awaiting_recipient'
-    ? `${agreement.party_a} initiated this agreement. ${agreement.party_b} can accept, decline, or suggest different terms.`
-    : agreement.status === 'awaiting_initiator'
-      ? `${agreement.party_b} proposed different terms. ${agreement.party_a} must review and approve before the agreement takes effect.`
+  elements.confirmationHelp.textContent = agreement.understanding?.requested && !agreement.understanding.ready
+    ? understandingStatus(agreement.understanding)
+    : canAct
+    ? `Review the latest terms from ${offererName}. You can accept, suggest another change, or decline.`
+    : awaitingReview
+      ? `Your offer has been sent to ${reviewerName}. You'll see their response here automatically.`
       : agreement.status === 'declined'
-        ? 'The recipient declined this offer. The terms were never activated.'
-        : 'Both participants accepted the terms. Proposed amendments require fresh approval.';
+        ? 'This offer was declined. No agreement was activated.'
+        : 'Both participants approved these terms. Later changes require fresh approval.';
 
-  const stageText = {
-    awaiting_recipient: `<strong>Waiting for ${escapeHtml(agreement.party_b)}</strong><span>The initial offer was made by ${escapeHtml(agreement.party_a)}. It is not yet binding within SamePage.</span>`,
-    awaiting_initiator: `<strong>Counteroffer awaiting ${escapeHtml(agreement.party_a)}</strong><span>The recipient suggested different terms. Nothing is active until the initiator accepts.</span>`,
-    declined: '<strong>Offer declined</strong><span>No active agreement was created.</span>',
-    in_progress: '<strong>Agreement accepted</strong><span>Track delivery, review changes and keep a record of decisions.</span>',
-    awaiting_completion_review: '<strong>Delivery awaiting review</strong><span>The other participant needs to confirm whether the promised work was delivered.</span>',
-    completed: '<strong>Completed</strong><span>Delivery was accepted. The agreement and its history remain available.</span>',
-    disputed: '<strong>Delivery disputed</strong><span>The recorded completion has been challenged. The dispute remains unresolved.</span>'
+  const person = personName(selectedParty);
+  const responsible = personName(agreement.responsible_party);
+  const other = personName(agreement.responsible_party === 'a' ? 'b' : 'a');
+  const messages = {
+    declined: ['Offer declined', 'No active agreement was created. You can start a new agreement whenever you need.'],
+    in_progress: selectedParty === agreement.responsible_party
+      ? ['Agreement accepted', `Next, ${person}, submit the completed work for ${other} to review.`]
+      : ['Agreement accepted', `Waiting for ${responsible} to submit the completed work. You can review it here when ready.`],
+    awaiting_completion_review: selectedParty === agreement.responsible_party
+      ? ['Delivery submitted', `Waiting for ${other} to accept the work or report a problem.`]
+      : ['Delivery ready for review', `Check the work submitted by ${responsible} and accept it or report an issue.`],
+    completed: ['Agreement completed', 'The work was accepted. You can view and print the approved agreement.'],
+    disputed: selectedParty === agreement.responsible_party
+      ? ['Delivery needs attention', 'Review the reported problem, then submit the corrected work.']
+      : ['Problem reported', `Waiting for ${responsible} to address your feedback and resubmit the work.`]
   };
-  elements.stageSummary.innerHTML = stageText[agreement.status] || '';
+  const waitingForUnderstanding = awaitingReview && agreement.understanding?.requested && !agreement.understanding.ready;
+  const [headline, detail] = waitingForUnderstanding
+    ? [agreement.understanding.state === 'awaiting_other' ? `Waiting for ${personName(selectedParty === 'a' ? 'b' : 'a')}` : 'Understanding needs review', understandingStatus(agreement.understanding)]
+    : awaitingReview
+    ? (canAct ? ['Your response is needed', `Review ${offererName}'s ${agreement.offer_revision ? 'counteroffer' : 'offer'} and choose how to proceed.`]
+      : ['Waiting for a response', `${reviewerName} is reviewing your ${agreement.offer_revision ? 'counteroffer' : 'offer'}. This page updates automatically.`])
+    : (messages[agreement.status] || ['Agreement updated', 'See the current agreement details below.']);
+  const role = selectedParty === 'a' ? 'Initiator' : 'Recipient';
+  const needsUnderstanding = awaitingReview && agreement.understanding?.requested && !agreement.understanding.ready;
+  let action = '';
+  if (canAct) {
+    const changes = agreement.offer_changes.map(change => `<div class="review-change">
+      <span>${escapeHtml(fieldNames[change.field] || change.field)}</span>
+      <span><del>${escapeHtml(change.old_value)}</del> → <strong>${escapeHtml(change.new_value)}</strong></span>
+    </div>`).join('');
+    const summary = Object.entries(fieldNames).map(([field, label]) => `<div class="review-term">
+      <span>${escapeHtml(label)}</span><strong>${escapeHtml(agreement.terms[field])}</strong>
+    </div>`).join('');
+    const blocked = agreement.understanding?.requested && !agreement.understanding.ready;
+    action = `<details class="response-review" id="response-review">
+      <summary>Review ${agreement.offer_revision ? 'counteroffer' : 'offer'}</summary>
+      <div class="response-review-body">
+        ${changes ? `<div class="review-differences">${changes}</div>` : ''}
+        <div class="review-terms">${summary}</div>
+        ${agreement.offer_note ? `<p class="review-note">Message from ${escapeHtml(offererName)}: ${escapeHtml(agreement.offer_note)}</p>` : ''}
+        ${blocked ? `<p class="review-note">${escapeHtml(understandingStatus(agreement.understanding))}</p>` : ''}
+        <div class="review-actions">
+          ${blocked
+            ? `<button type="button" class="button button-primary" data-stage-action="understanding">${agreement.understanding.state === 'awaiting_other' ? 'View understanding status' : 'Resolve understanding'}</button>`
+            : `<button type="button" class="button button-primary" data-stage-action="accept">Accept ${agreement.offer_revision ? 'counteroffer' : 'offer'}</button>`}
+          <button type="button" class="button button-secondary" data-stage-action="counter">Suggest different terms</button>
+          <button type="button" class="text-button" data-stage-action="decline">Decline</button>
+        </div>
+      </div>
+    </details>`;
+  } else if (agreement.status === 'in_progress' && selectedParty === agreement.responsible_party
+      || agreement.status === 'awaiting_completion_review' && selectedParty !== agreement.responsible_party
+      || agreement.status === 'disputed' && selectedParty === agreement.responsible_party) {
+    action = '<button type="button" class="text-button next-step" data-jump="completion-panel">View delivery <span aria-hidden="true">→</span></button>';
+  }
+  if (needsUnderstanding && !canAct) {
+    action = `<button type="button" class="button button-secondary next-step" data-stage-action="understanding">${agreement.understanding.state === 'awaiting_other' ? 'View understanding status' : 'Complete understanding'} <span aria-hidden="true">→</span></button>`;
+  }
+  elements.stageSummary.innerHTML = `<small class="viewer-label">Viewing as ${escapeHtml(person)} · ${role}</small><strong>${escapeHtml(headline)}</strong><span>${escapeHtml(detail)}</span>${action}`;
   elements.caseDetail.textContent = `Initiated by ${agreement.party_a} · Sent to ${agreement.party_b}`;
 }
-
 
 function renderChanges() {
   if (!agreement.proposals.length) {
@@ -300,6 +445,7 @@ function renderAgreement() {
   elements.caseTitle.textContent = agreement.title;
   elements.caseDetail.textContent = `${agreement.party_a} and ${agreement.party_b}`;
   renderTerms();
+  renderUnderstanding();
   renderChanges();
   renderHistory();
   renderCompletion();
@@ -330,6 +476,8 @@ elements.createForm.addEventListener('submit', async event => {
     const result = await request('/cases', 'POST', values);
     savedAccess = { id: result.case_id, keys: { a: result.party_a_key } };
     selectedParty = 'a';
+    editUnderstanding = false;
+    understandingRevision = null;
     const params = new URLSearchParams({ case: result.case_id, key: result.party_b_key, role: 'b' });
     invitationLink = `${window.location.origin}${window.location.pathname}#${params.toString()}`;
     saveAccess();
@@ -364,6 +512,7 @@ elements.confirmButton.addEventListener('click', async () => {
   try {
     agreement = await request(`/cases/${savedAccess.id}/confirm`, 'POST');
     renderAgreement();
+    notify('Offer accepted. The agreement is now active.');
   } catch (error) {
     notify(error.message, true);
     renderAgreement();
@@ -380,7 +529,53 @@ elements.declineForm.addEventListener('submit', async event => {
   try {
     agreement = await request(`/cases/${savedAccess.id}/decline`, 'POST', {message});
     renderAgreement();
+    notify('Offer declined. No agreement was activated.');
   } catch (error) { notify(error.message, true); }
+});
+
+elements.understandingRequest.addEventListener('click', async () => {
+  clearNotice();
+  try {
+    agreement = await request(`/cases/${savedAccess.id}/understanding/request`, 'POST');
+    renderAgreement();
+    notify('Understanding check started. Ask the other person to complete their response.');
+  } catch (error) { notify(error.message, true); }
+});
+
+elements.understandingEdit.addEventListener('click', () => {
+  editUnderstanding = true;
+  renderUnderstanding();
+  elements.understandingForm.querySelector('input')?.focus();
+});
+
+elements.understandingUseOffer.addEventListener('click', () => {
+  setFormTerms(elements.understandingForm, agreement.terms);
+  editUnderstanding = true;
+  elements.understandingForm.dataset.dirty = 'true';
+  elements.understandingForm.querySelector('input')?.focus();
+});
+
+elements.understandingForm.addEventListener('input', () => {
+  elements.understandingForm.dataset.dirty = 'true';
+});
+
+elements.understandingForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  clearNotice();
+  const submit = elements.understandingForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    const payload = Object.fromEntries(new FormData(elements.understandingForm).entries());
+    agreement = await request(`/cases/${savedAccess.id}/understanding`, 'POST', payload);
+    delete elements.understandingForm.dataset.dirty;
+    editUnderstanding = false;
+    renderAgreement();
+    const current = agreement.understanding;
+    notify(current.ready
+      ? 'Both responses match the offer. The reviewer can now accept it.'
+      : understandingStatus(current));
+  } catch (error) { notify(error.message, true); }
+  finally { submit.disabled = false; }
 });
 
 elements.counterForm.addEventListener('submit', async event => {
@@ -391,7 +586,11 @@ elements.counterForm.addEventListener('submit', async event => {
     agreement = await request(`/cases/${savedAccess.id}/counter`, 'POST', payload);
     elements.counterPanel.open = false;
     renderAgreement();
-  } catch (error) { notify(error.message, true); }
+    notify('Counteroffer sent. The other person can accept, counter again or decline.');
+  } catch (error) {
+    const unchanged = error.message.includes('Change at least one term');
+    notify(unchanged ? 'To accept the latest offer, use Accept. To counter, change the price, deadline or scope.' : error.message, true);
+  }
 });
 
 elements.manualForm.addEventListener('submit', async event => {
@@ -476,6 +675,48 @@ elements.proposals.addEventListener('click', async event => {
   }
 });
 
+function openUnderstanding() {
+  const panel = elements.understandingPanel;
+  if (panel.classList.contains('hidden')) return;
+  panel.scrollIntoView({behavior: 'smooth', block: 'center'});
+  panel.classList.remove('understanding-focus');
+  void panel.offsetWidth;
+  panel.classList.add('understanding-focus');
+  const form = elements.understandingForm;
+  const target = !form.classList.contains('hidden')
+    ? form.querySelector('input, textarea')
+    : !elements.understandingRequest.classList.contains('hidden')
+      ? elements.understandingRequest
+      : panel;
+  window.setTimeout(() => target?.focus({preventScroll: true}), 350);
+}
+
+elements.stageSummary.addEventListener('click', event => {
+  const action = event.target.closest('button[data-stage-action]')?.dataset.stageAction;
+  if (action === 'understanding') {
+    openUnderstanding();
+    return;
+  }
+  if (action === 'accept') {
+    if (elements.confirmButton.disabled) openUnderstanding();
+    else elements.confirmButton.click();
+    return;
+  }
+  if (action === 'counter') {
+    elements.counterPanel.open = true;
+    setFormTerms(elements.counterForm, agreement.terms);
+    elements.counterPanel.scrollIntoView({behavior: 'smooth', block: 'center'});
+    return;
+  }
+  if (action === 'decline') {
+    elements.declinePanel.classList.remove('hidden');
+    elements.declinePanel.scrollIntoView({behavior: 'smooth', block: 'center'});
+    return;
+  }
+  const target = event.target.closest('button[data-jump]');
+  if (target) document.getElementById(target.dataset.jump)?.scrollIntoView({behavior: 'smooth', block: 'center'});
+});
+
 elements.historyToggle.addEventListener('click', () => {
   showAllHistory = !showAllHistory;
   renderHistory();
@@ -546,10 +787,13 @@ elements.documentPrint.addEventListener('click', () => window.print());
 elements.resetButton.addEventListener('click', () => {
   if (!window.confirm('Start a new agreement? This browser will stop showing the current one.')) return;
   localStorage.removeItem(storageKey);
+  sessionStorage.removeItem(storageKey);
   savedAccess = null;
   invitationLink = null;
   agreement = null;
   selectedParty = 'a';
+  editUnderstanding = false;
+  understandingRevision = null;
   showAllHistory = false;
   elements.studio.classList.add('hidden');
   elements.createPanel.classList.remove('hidden');
@@ -575,10 +819,11 @@ async function initialize() {
     } else {
       savedAccess = readSavedAccess();
       selectedParty = savedAccess?.keys?.a ? 'a' : 'b';
+      if (savedAccess) saveAccess();
     }
     if (savedAccess) {
       try { await refreshAgreement(); }
-      catch { localStorage.removeItem(storageKey); savedAccess = null; }
+      catch { sessionStorage.removeItem(storageKey); savedAccess = null; }
     }
   } catch (error) {
     notify(`Unable to connect to the local server: ${error.message}`, true);
@@ -586,3 +831,28 @@ async function initialize() {
 }
 
 initialize();
+
+let backgroundRefresh = false;
+async function refreshInBackground() {
+  if (backgroundRefresh || document.hidden || !savedAccess || !agreement || elements.studio.classList.contains('hidden')) return;
+  const active = document.activeElement;
+  if (active?.matches('input, textarea, select') && active.closest('form')) return;
+  backgroundRefresh = true;
+  try {
+    const fresh = await request(`/cases/${savedAccess.id}`);
+    const relevant = value => JSON.stringify([value.status, value.terms, value.proposals,
+      value.completion, value.history.length, value.offer_revision, value.understanding]);
+    if (relevant(fresh) !== relevant(agreement)) {
+      agreement = fresh;
+      renderAgreement();
+    }
+  } catch {
+  } finally {
+    backgroundRefresh = false;
+  }
+}
+window.setInterval(refreshInBackground, 6000);
+window.addEventListener('focus', refreshInBackground);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshInBackground();
+});

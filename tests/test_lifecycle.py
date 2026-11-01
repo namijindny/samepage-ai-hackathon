@@ -121,3 +121,53 @@ def test_manual_approval_is_idempotent(client):
     assert already['terms']['price']=='₦120,000'
     accepted=c(f'/proposals/{pid}/approve','POST','b').json()
     assert accepted['terms']['price']=='₦125,000'
+
+
+def test_counteroffers_can_move_back_and_forth_until_accepted(client):
+    c = case(client)
+    first = c('/counter', 'POST', 'b', {
+        'price': '₦140,000', 'deadline': '15 November 2026',
+        'scope': 'Install kitchen cabinets', 'note': 'More materials required'
+    })
+    assert first.status_code == 200
+    assert first.json()['offer_by'] == 'b'
+    assert first.json()['offer_revision'] == 1
+    assert first.json()['status'] == 'awaiting_initiator'
+    assert first.json()['offer_changes'][0]['field'] == 'price'
+    assert c('/counter', 'POST', 'b', {
+        'price': '₦125,000', 'deadline': '15 November 2026',
+        'scope': 'Install kitchen cabinets'
+    }).status_code == 409
+    second = c('/counter', 'POST', 'a', {
+        'price': '₦130,000', 'deadline': '15 November 2026',
+        'scope': 'Install kitchen cabinets', 'note': 'Can we meet halfway?'
+    })
+    assert second.status_code == 200
+    assert second.json()['offer_by'] == 'a'
+    assert second.json()['offer_revision'] == 2
+    assert second.json()['status'] == 'awaiting_recipient'
+    assert second.json()['terms']['price'] == '₦130,000'
+    assert c('/documents').status_code == 409
+    final = c('/confirm', 'POST', 'b')
+    assert final.status_code == 200
+    assert final.json()['status'] == 'in_progress'
+    assert final.json()['a_confirmed'] and final.json()['b_confirmed']
+    assert c('/documents/1').json()['terms']['price'] == '₦130,000'
+    assert c().json()['audit_valid']
+    assert c('/completion', 'POST', 'b', {
+        'statement': 'Installed the agreed cabinets.'
+    }).json()['status'] == 'awaiting_completion_review'
+
+
+def test_only_pending_reviewer_can_decline_latest_counter(client):
+    c = case(client)
+    c('/counter', 'POST', 'b', {
+        'price': '₦140,000', 'deadline': '15 November 2026',
+        'scope': 'Install kitchen cabinets'
+    })
+    assert c('/decline', 'POST', 'b', {'message': 'Cancel this'}).status_code == 409
+    result = c('/decline', 'POST', 'a', {'message': 'Cannot meet this budget'})
+    assert result.status_code == 200
+    assert result.json()['status'] == 'declined'
+    assert c('/confirm', 'POST', 'a').status_code == 409
+    assert c('/documents').status_code == 409

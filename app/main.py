@@ -13,10 +13,11 @@ from .engine import detect
 from .documents import approved_documents
 from . import storage as s
 from . import workflow as w
+from . import clarity as c
 
 s.initialize()
 logger = logging.getLogger(__name__)
-app = FastAPI(title="SamePage AI — Agreement Drift Guardian", version="0.5.0")
+app = FastAPI(title="SamePage AI", version="0.7.0")
 ROOT = Path(__file__).resolve().parents[1]
 app.mount("/static", StaticFiles(directory=ROOT / "web"), name="static")
 
@@ -47,6 +48,12 @@ class ManualChange(BaseModel):
     deadline: str = Field(min_length=1, max_length=140)
     scope: str = Field(min_length=2, max_length=400)
     reason: str = Field(default='', max_length=500)
+
+
+class Understanding(BaseModel):
+    price: str = Field(min_length=1, max_length=140)
+    deadline: str = Field(min_length=1, max_length=140)
+    scope: str = Field(min_length=2, max_length=400)
 
 
 class Completion(BaseModel):
@@ -83,10 +90,14 @@ def view(db, row, who: str):
     audits = db.execute("SELECT * FROM audit WHERE case_id=? ORDER BY id", (row["id"],)).fetchall()
     completion_row = db.execute("SELECT * FROM completion WHERE case_id=?", (row["id"],)).fetchone()
     delivery = dict(completion_row) if completion_row else None
+    last_counter = next((event for event in reversed(audits) if event["event"] == "counteroffer_sent"), None)
+    counter_changes = json.loads(last_counter["payload_json"]).get("changes", []) if last_counter else []
     return {
         "id": row["id"], "title": row["title"],
         "party_a": row["party_a"], "party_b": row["party_b"], "viewer": who,
         "initiator": "a", "recipient": "b", "responsible_party": row["responsible_party"],
+        "offer_by": row["offer_by"], "offer_revision": row["offer_revision"],
+        "offer_note": row["offer_note"], "offer_changes": counter_changes,
         "status": w.status(row, delivery), "completion": delivery,
         "terms": json.loads(row["terms_json"]), "version": row["version"],
         "a_confirmed": bool(row["a_confirmed"]), "b_confirmed": bool(row["b_confirmed"]),
@@ -94,6 +105,7 @@ def view(db, row, who: str):
         "proposals": pending,
         "history": [{"event": a["event"], "created_at": a["created_at"], "payload": json.loads(a["payload_json"])} for a in audits],
         "audit_valid": s.verify_chain(audits),
+        "understanding": c.inspect(db, row, who),
     }
 
 
@@ -157,9 +169,50 @@ def confirm_case(case_id: str, x_party_key: str | None = Header(default=None)):
             raise HTTPException(409,"This offer has been declined")
         if row[f"{who}_confirmed"]:
             return view(db,row,who)
+        if w.status(row) not in ("awaiting_recipient", "awaiting_initiator"):
+            raise HTTPException(409, "No offer is awaiting confirmation")
+        if not c.inspect(db, row, who)["ready"]:
+            raise HTTPException(409, "Resolve the understanding differences before accepting the offer")
         db.execute(f"UPDATE cases SET {who}_confirmed=1 WHERE id=?",(case_id,))
         s.record(db,case_id,"initial_confirmed",{"party":who,"version":row["version"]})
         return view(db,fetch(db,case_id),who)
+
+
+@app.post("/api/cases/{case_id}/understanding/request")
+def request_understanding(case_id: str, x_party_key: str | None = Header(default=None)):
+    with s.connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = fetch(db, case_id)
+        who = authorize(row, x_party_key)
+        if w.status(row) not in ("awaiting_recipient", "awaiting_initiator"):
+            raise HTTPException(409, "Understanding can only be checked before the offer is accepted")
+        existing = c.inspect(db, row, who)
+        if not existing["requested"]:
+            c.request(db, row, who)
+            s.record(db, case_id, "understanding_requested", {"party": who, "offer_revision": row["offer_revision"]})
+        return view(db, fetch(db, case_id), who)
+
+
+@app.post("/api/cases/{case_id}/understanding")
+def submit_understanding(case_id: str, payload: Understanding, x_party_key: str | None = Header(default=None)):
+    with s.connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = fetch(db, case_id)
+        who = authorize(row, x_party_key)
+        if w.status(row) not in ("awaiting_recipient", "awaiting_initiator"):
+            raise HTTPException(409, "Understanding cannot be changed after acceptance")
+        if not c.inspect(db, row, who)["requested"]:
+            raise HTTPException(409, "Request a shared understanding check first")
+        answers = {field: getattr(payload, field).strip() for field in c.FIELDS}
+        previous = c.inspect(db, row, who)["ready"]
+        changed = c.answer(db, row, who, answers)
+        if changed:
+            s.record(db, case_id, "understanding_submitted", {"party": who, "offer_revision": row["offer_revision"]})
+        result = view(db, fetch(db, case_id), who)
+        if result["understanding"]["ready"] and not previous:
+            s.record(db, case_id, "understanding_aligned", {"offer_revision": row["offer_revision"]})
+            result = view(db, fetch(db, case_id), who)
+        return result
 
 
 @app.post("/api/cases/{case_id}/decline")
@@ -167,8 +220,8 @@ def decline_case(case_id: str, payload: Message, x_party_key: str | None = Heade
     with s.connection() as db:
         db.execute("BEGIN IMMEDIATE")
         row=fetch(db,case_id); who=authorize(row,x_party_key)
-        if who != "b" or row["declined_at"] or row["b_confirmed"]:
-            raise HTTPException(409,"Only the recipient can decline a pending offer")
+        if row["declined_at"] or w.status(row) not in ("awaiting_recipient", "awaiting_initiator") or who == row["offer_by"]:
+            raise HTTPException(409,"Only the person reviewing the latest offer can decline it")
         db.execute("UPDATE cases SET declined_at=? WHERE id=?",(s.utcnow(),case_id))
         s.record(db,case_id,"offer_declined",{"party":who,"reason":payload.message})
         return view(db,fetch(db,case_id),who)
@@ -179,13 +232,16 @@ def counter_case(case_id: str, payload: Counteroffer, x_party_key: str | None = 
     with s.connection() as db:
         db.execute("BEGIN IMMEDIATE")
         row=fetch(db,case_id); who=authorize(row,x_party_key)
-        if who != "b" or row["declined_at"] or row["b_confirmed"]:
-            raise HTTPException(409,"Counteroffers are available only to a recipient reviewing an initial offer")
+        if row["declined_at"] or w.status(row) not in ("awaiting_recipient", "awaiting_initiator") or who == row["offer_by"]:
+            raise HTTPException(409,"Only the person reviewing the latest offer can suggest different terms")
         revised = w.clean_terms({"price": payload.price, "deadline": payload.deadline, "scope": payload.scope})
         changes = w.changes_between(json.loads(row["terms_json"]),revised)
-        db.execute("UPDATE cases SET terms_json=?, a_confirmed=0, b_confirmed=1 WHERE id=?",(s.canon(revised),case_id))
-        s.record(db,case_id,"counteroffer_sent",{"party":"b","version":1,"changes":changes,"note":payload.note,"terms":revised})
-        s.record(db,case_id,"initial_confirmed",{"party":"b","version":1})
+        offerer_confirmed = "a_confirmed" if who == "a" else "b_confirmed"
+        reviewer_confirmed = "b_confirmed" if who == "a" else "a_confirmed"
+        db.execute(f"UPDATE cases SET terms_json=?, {offerer_confirmed}=1, {reviewer_confirmed}=0, offer_by=?, offer_revision=offer_revision+1, offer_note=? WHERE id=?",
+                   (s.canon(revised), who, payload.note.strip(), case_id))
+        s.record(db,case_id,"counteroffer_sent",{"party":who,"version":1,"changes":changes,"note":payload.note.strip(),"terms":revised})
+        s.record(db,case_id,"initial_confirmed",{"party":who,"version":1})
         return view(db,fetch(db,case_id),who)
 
 

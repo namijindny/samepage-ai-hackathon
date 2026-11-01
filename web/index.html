@@ -79,8 +79,29 @@
               <span class="status-chip status-pending" id="case-status">Awaiting confirmation</span>
             </div>
             <div class="terms-grid" id="terms"></div>
+            <div id="offer-review" class="offer-review hidden"></div>
+            <section id="understanding-panel" class="understanding-panel hidden" aria-labelledby="understanding-title">
+              <div class="section-heading"><h3 id="understanding-title">Make sure you both mean the same thing</h3><p>Check each person's understanding before accepting.</p></div>
+              <button type="button" class="button button-secondary" id="understanding-request">Check understanding</button>
+              <div id="understanding-progress" class="muted-copy hidden"></div>
+              <form id="understanding-form" class="nested-form hidden">
+                <p class="muted-copy">Review the proposed terms carefully. If anything is unclear or different from what you expect, request corrected terms before accepting.</p>
+                <div class="field-grid">
+                  <div class="field"><label for="understanding-price">Your understanding of the price</label><input id="understanding-price" name="price" maxlength="140" required placeholder="e.g. ₦120,000"></div>
+                  <div class="field"><label for="understanding-deadline">Your understanding of the deadline</label><input id="understanding-deadline" name="deadline" maxlength="140" required placeholder="e.g. 15 November 2026"></div>
+                </div>
+                <label for="understanding-scope">What will be delivered?</label>
+                <textarea id="understanding-scope" name="scope" rows="2" maxlength="400" required></textarea>
+                <div class="form-actions understanding-actions">
+                  <button type="button" class="button button-secondary" id="understanding-use-offer">Use proposed terms</button>
+                  <button class="button button-primary" type="submit">Save my understanding</button>
+                </div>
+              </form>
+              <button type="button" class="text-button hidden" id="understanding-edit">Edit my response</button>
+              <div id="understanding-result" class="understanding-result hidden"></div>
+            </section>
             <div class="rule"></div>
-            <div class="confirmation-heading"><h3>Approval</h3><p id="confirmation-help">The recipient can review the initiator’s offer.</p></div>
+            <div class="confirmation-heading"><h3 id="confirmation-title">Approval</h3><p id="confirmation-help">The recipient can review the initiator’s offer.</p></div>
             <div id="approvals" class="approvals"></div>
             <div class="confirmation-controls">
               <div class="select-field" id="party-selector"><label for="party-switch">Local preview as</label><select id="party-switch"><option value="a">Person A</option><option value="b">Person B</option></select></div><p class="access-role hidden" id="access-role"></p>
@@ -101,8 +122,8 @@
                   <div class="field"><label for="counter-price">Price</label><input id="counter-price" name="price" required></div>
                   <div class="field"><label for="counter-deadline">Deadline</label><input id="counter-deadline" name="deadline" required></div>
                 </div>
-                <label for="counter-scope">What's included?</label><textarea id="counter-scope" name="scope" rows="3" required></textarea>
-                <label for="counter-note">Reason (optional)</label><input id="counter-note" name="note" maxlength="500" placeholder="Explain what you want changed">
+                <label for="counter-scope">What's included?</label><textarea id="counter-scope" name="scope" rows="3" required placeholder="Describe the work to be delivered"></textarea>
+                <label for="counter-note">Reason (optional)</label><input id="counter-note" name="note" maxlength="500" placeholder="Explain the reason for your counteroffer">
                 <div class="form-actions"><button class="button button-primary" type="submit">Send counteroffer</button></div>
               </form>
             </details>
@@ -137,7 +158,7 @@
 
         <div class="workspace-column">
           <section class="surface" aria-labelledby="changes-title">
-            <div class="section-heading"><h2 id="changes-title">Changes</h2><p>Updates take effect only when both people approve.</p></div>
+            <div class="section-heading"><h2 id="changes-title">Amendments</h2><p>After acceptance, changes require approval from both people.</p></div>
             <div id="proposals"></div>
           </section>
           <section class="surface" aria-labelledby="activity-title">

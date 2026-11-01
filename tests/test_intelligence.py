@@ -5,7 +5,7 @@ import sys
 from types import SimpleNamespace
 import pytest
 
-from app.engine import validate_response, detect
+from app.engine import MetaResponseError, validate_response, detect
 
 CURRENT = {"price": "₦120,000", "deadline": "Friday", "scope": "Repair vehicle engine"}
 
@@ -76,6 +76,8 @@ def test_actual_meta_path_with_mock_sdk(monkeypatch, tmp_path):
             calls.append(kwargs)
             assert kwargs["model"] == "muse-spark-1.3"
             assert kwargs["response_format"]["type"] == "json_schema"
+            assert kwargs["max_completion_tokens"] == 2500
+            assert kwargs["reasoning_effort"] == "low"
             answer = output("change_proposal", [change("deadline", "Monday", "finish on Monday")])
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(answer)))])
 
@@ -93,3 +95,35 @@ def test_no_api_key_means_no_model_call(monkeypatch):
     monkeypatch.delenv("MODEL_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="MODEL_API_KEY"):
         detect("Finish on Monday", CURRENT)
+
+
+@pytest.mark.parametrize(
+    ("answer", "finish_reason", "expected"),
+    [
+        ("{", "length", "output_limit"),
+        ("{", "stop", "invalid_json"),
+        ("[]", "stop", "unexpected_shape"),
+        (json.dumps({"intent": "unknown", "changes": [], "explanation": "x"}), "stop", "invalid_content"),
+        ("", "stop", "empty_content"),
+    ],
+)
+def test_meta_reports_specific_response_issue(monkeypatch, tmp_path, answer, finish_reason, expected):
+    from app import storage
+    monkeypatch.setattr(storage, "DB", tmp_path / "usage.sqlite3")
+    monkeypatch.setenv("MODEL_API_KEY", "test-only-key")
+    monkeypatch.setenv("ANALYSIS_MODE", "meta")
+    monkeypatch.setenv("MAX_META_CALLS_PER_DAY", "10")
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.complete))
+        def complete(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason=finish_reason,
+                message=SimpleNamespace(content=answer),
+            )])
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    with pytest.raises(MetaResponseError) as error:
+        detect("I propose changing the deadline to Monday.", CURRENT)
+    assert error.value.reason == expected

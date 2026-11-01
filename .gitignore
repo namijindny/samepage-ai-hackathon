@@ -1,11 +1,38 @@
+# Local environments and secrets
 .venv/
 venv/
-__pycache__/
-.pytest_cache/
-*.py[cod]
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+
+# Local agreements and private data
 data/
+*.sqlite
 *.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Caches and local tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.vscode/
+.idea/
+
+# Local downloads, exports, and transient archives
+*.zip
+*.bak
+*.log
+*.tmp
+README-fix.txt
+*.pdf
 .DS_Store
+Thumbs.db
