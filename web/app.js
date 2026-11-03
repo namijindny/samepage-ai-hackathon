@@ -57,7 +57,13 @@ const elements = {
   manualForm: document.querySelector('#manual-form'),
   completionPanel: document.querySelector('#completion-panel'),
   completionContent: document.querySelector('#completion-content'),
-  deliveryHelp: document.querySelector('#delivery-help')
+  deliveryHelp: document.querySelector('#delivery-help'),
+  conversationMessages: document.querySelector('#conversation-messages'),
+  conversationForm: document.querySelector('#conversation-form'),
+  conversationReview: document.querySelector('#conversation-review-button'),
+  conversationHint: document.querySelector('#conversation-review-hint'),
+  conversationFeedback: document.querySelector('#conversation-review-feedback'),
+  conversationResult: document.querySelector('#conversation-result')
 };
 
 const storageKey = 'samepage_local_demo';
@@ -75,6 +81,14 @@ const eventNames = {
   delivery_accepted: 'Delivery accepted',
   delivery_disputed: 'Delivery disputed',
   delivery_resubmitted: 'Delivery resubmitted',
+  delivery_plan_proposed: 'Delivery checklist proposed',
+  delivery_plan_approved: 'Delivery checklist approved',
+  delivery_plan_rejected: 'Delivery checklist changes requested',
+  deliverable_submitted: 'Deliverable submitted',
+  deliverable_resubmitted: 'Deliverable resubmitted',
+  deliverable_disputed: 'Deliverable correction requested',
+  deliverable_accepted: 'Deliverable accepted',
+  delivery_completed: 'All deliverables accepted',
   understanding_requested: 'Understanding check requested',
   understanding_submitted: 'Understanding shared',
   understanding_aligned: 'Terms understood by both' 
@@ -87,6 +101,7 @@ let showAllHistory = false;
 let invitationLink = null;
 let editUnderstanding = false;
 let understandingRevision = null;
+let conversationReviewPending = false;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -117,7 +132,7 @@ function saveAccess() {
   if (selectedParty === 'a' || !previous) localStorage.setItem(storageKey, JSON.stringify(savedAccess));
 }
 
-async function request(path, method = 'GET', payload) {
+async function request(path, method = 'GET', payload, options = {}) {
   const headers = { 'Content-Type': 'application/json' };
   const accessKey = savedAccess?.keys?.[selectedParty];
   if (accessKey) headers['X-Party-Key'] = accessKey;
@@ -125,6 +140,7 @@ async function request(path, method = 'GET', payload) {
   const response = await fetch(`/api${path}`, {
     method,
     headers,
+    ...(options.signal ? {signal: options.signal} : {}),
     ...(payload === undefined ? {} : { body: JSON.stringify(payload) })
   });
   let result;
@@ -265,11 +281,11 @@ function renderTerms() {
       ${agreement.offer_note ? `<p>${escapeHtml(agreement.offer_note)}</p>` : ''}`;
   }
 
-  const editable = agreement.status === 'in_progress';
+  const editable = agreement.status === 'in_progress' && !['pending','active'].includes(agreement.delivery_plan?.status);
   elements.analyzeButton.disabled = !editable;
   elements.messageForm.elements.message.disabled = !editable;
   elements.manualPanel.classList.toggle('hidden', !editable);
-  elements.confirmationHelp.textContent = agreement.understanding?.requested && !agreement.understanding.ready
+  elements.confirmationHelp.textContent = awaitingReview && agreement.understanding?.requested && !agreement.understanding.ready
     ? understandingStatus(agreement.understanding)
     : canAct
     ? `Review the latest terms from ${offererName}. You can accept, suggest another change, or decline.`
@@ -284,9 +300,11 @@ function renderTerms() {
   const other = personName(agreement.responsible_party === 'a' ? 'b' : 'a');
   const messages = {
     declined: ['Offer declined', 'No active agreement was created. You can start a new agreement whenever you need.'],
-    in_progress: selectedParty === agreement.responsible_party
-      ? ['Agreement accepted', `Next, ${person}, submit the completed work for ${other} to review.`]
-      : ['Agreement accepted', `Waiting for ${responsible} to submit the completed work. You can review it here when ready.`],
+    in_progress: agreement.delivery_plan?.status === 'pending'
+      ? ['Checklist awaiting approval', `Review the proposed delivery criteria before tracking completed work.`]
+      : agreement.delivery_plan?.status === 'active'
+        ? ['Delivery in progress', `Track each approved deliverable and its review in the Delivery section.`]
+        : ['Agreement accepted', 'Agree on a delivery checklist so both participants know exactly what counts as complete.'],
     awaiting_completion_review: selectedParty === agreement.responsible_party
       ? ['Delivery submitted', `Waiting for ${other} to accept the work or report a problem.`]
       : ['Delivery ready for review', `Check the work submitted by ${responsible} and accept it or report an issue.`],
@@ -398,6 +416,59 @@ function renderHistory() {
   elements.historyToggle.textContent = showAllHistory ? 'Show less' : 'Show all activity';
 }
 
+function checklistStatus(value) {
+  return ({pending: 'Not submitted', submitted: 'Awaiting review', disputed: 'Needs correction', accepted: 'Accepted'})[value] || 'Not started';
+}
+
+function renderChecklist() {
+  const plan = agreement.delivery_plan;
+  const responsible = agreement.responsible_party;
+  const provider = personName(responsible);
+  const reviewer = personName(responsible === 'a' ? 'b' : 'a');
+  const intro = `<p class="muted-copy">${escapeHtml(provider)} delivers the work. ${escapeHtml(reviewer)} checks each agreed item against its acceptance criteria.</p>`;
+  if (!plan || plan.status === 'rejected') {
+    const previous = plan?.status === 'rejected' ? `<p class="delivery-outcome">The earlier checklist was declined: ${escapeHtml(plan.review_note || 'Please revise the checklist.')}</p>` : '';
+    return `${intro}${previous}<form id="plan-form" class="nested-form">
+      <p class="muted-copy">Agree on what must be delivered before work is marked complete. Both people must approve this checklist.</p>
+      <div id="plan-items">
+        <div class="deliverable-fields">
+          <label>Deliverable<input name="description" required minlength="5" maxlength="250" placeholder="e.g. Complete the website homepage"></label>
+          <label>How it will be accepted<textarea name="acceptance_criteria" required minlength="5" maxlength="350" rows="2" placeholder="e.g. Homepage works on mobile and desktop"></textarea></label>
+        </div>
+      </div><div class="form-actions"><button type="button" class="button button-secondary" data-plan="add">Add deliverable</button><button type="submit" class="button button-primary">Send checklist for approval</button></div>
+    </form>`;
+  }
+  const items = plan.items || [];
+  const list = items.map(item => {
+    const head = `<div class="deliverable-head"><strong>${escapeHtml(item.description)}</strong><span class="deliverable-badge">${escapeHtml(checklistStatus(item.status))}</span></div>
+      <p class="muted-copy">Accept when: ${escapeHtml(item.acceptance_criteria)}</p>`;
+    if (plan.status === 'pending') return `<div class="deliverable-item">${head}</div>`;
+    const statement = item.statement ? `<div class="delivery-record"><strong>Delivery statement</strong><p>${escapeHtml(item.statement)}</p>${item.reference ? `<p class="muted-copy">Evidence reference: ${escapeHtml(item.reference)}</p>` : ''}</div>` : '';
+    const review = item.review_note ? `<p class="delivery-outcome">Review: ${escapeHtml(item.review_note)}</p>` : '';
+    const canSubmit = selectedParty === responsible && ['pending','disputed'].includes(item.status);
+    const canReview = selectedParty !== responsible && item.status === 'submitted';
+    const entry = canSubmit ? `<form data-item-submit="${escapeHtml(item.id)}" class="nested-form">
+      <label>What was completed?<textarea name="statement" required minlength="8" maxlength="1500" rows="2" placeholder="Describe what was done and how it meets the criteria"></textarea></label>
+      <label>Evidence reference (optional)<input name="reference" maxlength="500" placeholder="Receipt number, document reference or link"></label>
+      <button type="submit" class="button button-primary">${item.status === 'disputed' ? 'Submit corrected work' : 'Submit this item'}</button></form>` : '';
+    const decision = canReview ? `<div class="form-actions"><button type="button" class="button button-primary" data-item-review="${escapeHtml(item.id)}" data-accept="true">Accept item</button><button type="button" class="button button-secondary" data-show-dispute="${escapeHtml(item.id)}">Request correction</button></div>
+      <form class="nested-form hidden" id="dispute-${escapeHtml(item.id)}" data-item-dispute="${escapeHtml(item.id)}">
+        <label>What needs correction?<textarea name="note" minlength="5" maxlength="1000" required rows="2"></textarea></label><button type="submit" class="button button-secondary">Send correction request</button></form>` : '';
+    return `<div class="deliverable-item">${head}${statement}${review}${entry}${decision}</div>`;
+  }).join('');
+  if (plan.status === 'pending') {
+    const canReview = selectedParty !== plan.author;
+    return `${intro}<p class="delivery-outcome">Checklist proposed by ${escapeHtml(personName(plan.author))}. ${canReview ? 'Review each item before approving.' : `Waiting for ${escapeHtml(personName(selectedParty === 'a' ? 'b' : 'a'))} to approve.`}</p>${list}
+      ${canReview ? `<div class="form-actions"><button class="button button-primary" data-plan="approve" type="button">Approve checklist</button><button class="button button-secondary" data-plan="decline" type="button">Request changes</button></div>
+      <form class="nested-form hidden" id="plan-rejection"><label>What should change?<textarea name="note" rows="2" required minlength="5" maxlength="700"></textarea></label><button type="submit" class="button button-secondary">Send feedback</button></form>` : ''}`;
+  }
+  const completed = plan.accepted_count || 0;
+  const total = plan.total_count || items.length;
+  const finished = completed === total;
+  return `${intro}<div class="delivery-progress"><strong>${completed} of ${total} items accepted</strong><span>${finished ? 'All agreed work reviewed' : 'Every item must be accepted before completion'}</span></div>
+    ${list}${finished ? '<p class="delivery-outcome">All deliverables were accepted by the reviewing participant. The delivery record is preserved in the agreement history.</p>' : ''}`;
+}
+
 function renderCompletion() {
   const delivery = agreement.completion;
   const responsible = agreement.responsible_party;
@@ -406,6 +477,10 @@ function renderCompletion() {
   elements.completionPanel.classList.toggle('hidden', !agreement.active);
   elements.deliveryHelp.textContent = `${provider} is responsible for delivery. ${reviewer} reviews the result.`;
   if (!agreement.active) return;
+  if (agreement.delivery_plan || !delivery) {
+    elements.completionContent.innerHTML = renderChecklist();
+    return;
+  }
   if (!delivery && agreement.status === 'in_progress') {
     elements.completionContent.innerHTML = selectedParty === responsible ? `
       <form id="delivery-form" class="nested-form">
@@ -439,6 +514,60 @@ function renderCompletion() {
   }
 }
 
+function renderConversation() {
+  const conversation = agreement.conversation || { messages: [], review: null, review_current: false };
+  const messages = conversation.messages || [];
+  elements.conversationMessages.innerHTML = messages.length ? messages.slice(-12).map(message => {
+    const author = message.author === 'a' ? agreement.party_a : agreement.party_b;
+    return `<div class="conversation-entry${message.author === selectedParty ? ' own' : ''}">
+      <div class="conversation-byline"><strong>${escapeHtml(author)}</strong><time>${escapeHtml(formatDate(message.created_at))}</time></div>
+      <p>${escapeHtml(message.body)}</p>
+    </div>`;
+  }).join('') : '<p class="muted-copy">No messages yet. Start the conversation here.</p>';
+
+  elements.conversationReview.disabled = !messages.length || conversationReviewPending;
+  elements.conversationReview.textContent = conversationReviewPending ? 'Reviewing conversation…' : 'Review conversation with AI';
+  const review = conversation.review;
+  if (!review) {
+    elements.conversationResult.classList.add('hidden');
+    elements.conversationResult.innerHTML = '';
+    return;
+  }
+  const current = conversation.review_current;
+  const observations = (review.observations || []).map(item => {
+    const author = personName(item.author);
+    return `<div class="conversation-observation"><div class="conversation-byline"><strong>${escapeHtml(item.kind.replaceAll('_', ' '))}</strong><span>${escapeHtml(author)}</span></div>
+      <blockquote>${escapeHtml(item.quote)}</blockquote>
+      ${item.meaning ? `<p>${escapeHtml(item.meaning)}</p>` : ''}</div>`;
+  }).join('');
+  const changes = (review.changes || []).map(item => `<div class="conversation-change"><strong>${escapeHtml(fieldNames[item.field] || item.field)}</strong>
+      <span>${escapeHtml(item.new_value)}</span><small>“${escapeHtml(item.evidence)}”</small></div>`).join('');
+  const pendingChange = (agreement.proposals || []).some(item => item.status === 'pending');
+  const canDraft = current && review.intent === 'change_proposal' && (review.changes || []).length
+    && agreement.active && agreement.status === 'in_progress' && !pendingChange
+    && review.last_author === selectedParty;
+  const suggested = {...agreement.terms};
+  for (const change of review.changes || []) {
+    if (Object.hasOwn(suggested, change.field)) suggested[change.field] = change.new_value;
+  }
+  const termsPreview = Object.entries(suggested).map(([field, value]) => `
+    <div class="review-term"><span>${escapeHtml(fieldNames[field] || field)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
+  const approveAction = canDraft ? `<details class="review-action">
+      <summary>Prepare an amendment</summary>
+      <p class="muted-copy">Check all the terms before sending. By sending this proposal, you approve the suggested change. The other person must approve it before it takes effect.</p>
+      <div class="review-terms">${termsPreview}</div>
+      <button class="button button-primary" type="button" id="send-conversation-change">Send for approval</button>
+    </details>` : '';
+  elements.conversationResult.innerHTML = `<div class="conversation-review-title"><strong>Conversation review</strong><span>${current ? 'Current' : 'Earlier review'}</span></div>
+    <p class="muted-copy">${current ? 'Only statements linked to the messages below are shown. Review interpretations before acting.' : 'New messages were added since this review. Run it again for an updated assessment.'}</p>
+    ${observations || '<p class="muted-copy">No source-linked observations returned.</p>'}
+    ${changes ? `<h3>Possible changes in the latest message</h3>${changes}` : '<p class="muted-copy">No verified new amendment in the latest message.</p>'}
+    ${approveAction}
+    ${pendingChange && current && review.changes?.length ? '<p class="conversation-safety">An amendment is already awaiting a response. Review it in Changes.</p>' : ''}
+    <p class="conversation-safety">The approved agreement stays unchanged until both people explicitly approve an amendment.</p>`;
+  elements.conversationResult.classList.remove('hidden');
+}
+
 function renderAgreement() {
   elements.createPanel.classList.add('hidden');
   elements.studio.classList.remove('hidden');
@@ -449,6 +578,7 @@ function renderAgreement() {
   renderChanges();
   renderHistory();
   renderCompletion();
+  renderConversation();
   if (!agreement.audit_valid) notify('This agreement’s history could not be verified. Please do not rely on it until the issue is resolved.', true);
 }
 
@@ -466,6 +596,76 @@ function showFinding(finding, created) {
   elements.finding.innerHTML = `<strong>${escapeHtml(title)}</strong><p>${escapeHtml(summary)}</p>`;
   elements.finding.classList.remove('hidden');
 }
+
+elements.conversationForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const submit = elements.conversationForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  clearNotice();
+  try {
+    agreement = await request(`/cases/${savedAccess.id}/conversation/messages`, 'POST', {
+      message: elements.conversationForm.elements.message.value.trim()
+    });
+    elements.conversationForm.reset();
+    renderAgreement();
+  } catch (error) { notify(error.message, true); }
+  finally { submit.disabled = false; }
+});
+
+function setConversationFeedback(message, isError = false) {
+  elements.conversationFeedback.textContent = message;
+  elements.conversationFeedback.classList.toggle('hidden', !message);
+  elements.conversationFeedback.classList.toggle('error', isError);
+}
+
+elements.conversationReview.addEventListener('click', async () => {
+  if (conversationReviewPending || !agreement?.conversation?.messages?.length) return;
+  conversationReviewPending = true;
+  elements.conversationReview.disabled = true;
+  elements.conversationReview.textContent = 'Reviewing conversation…';
+  setConversationFeedback('Checking the conversation with Meta. This can take up to a minute.');
+  clearNotice();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 70000);
+  const slowNotice = window.setTimeout(() => {
+    setConversationFeedback('Still checking with Meta. Your messages and agreement are unchanged.');
+  }, 15000);
+  try {
+    agreement = await request(`/cases/${savedAccess.id}/conversation/review`, 'POST', undefined, {signal: controller.signal});
+    clearTimeout(slowNotice);
+    setConversationFeedback('Review complete. Any changes still require both people to approve.');
+    renderAgreement();
+    elements.conversationResult.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  } catch (error) {
+    const message = error.name === 'AbortError'
+      ? 'The AI review timed out. Your agreement is unchanged. Please check Meta availability before trying again.'
+      : `${error.message} Your agreement is unchanged.`;
+    setConversationFeedback(message, true);
+  } finally {
+    clearTimeout(timeout);
+    clearTimeout(slowNotice);
+    conversationReviewPending = false;
+    elements.conversationReview.disabled = !agreement?.conversation?.messages?.length;
+    elements.conversationReview.textContent = 'Review conversation with AI';
+  }
+});
+
+elements.conversationResult.addEventListener('click', async event => {
+  if (event.target.id !== 'send-conversation-change') return;
+  const button = event.target;
+  if (button.disabled) return;
+  button.disabled = true;
+  clearNotice();
+  try {
+    agreement = await request(`/cases/${savedAccess.id}/conversation/prepare-amendment`, 'POST');
+    renderAgreement();
+    notify('Amendment sent. The other person can now review it. Your agreed terms have not changed.');
+    elements.proposals.scrollIntoView({behavior: 'smooth', block: 'center'});
+  } catch (error) {
+    notify(error.message, true);
+    button.disabled = false;
+  }
+});
 
 elements.createForm.addEventListener('submit', async event => {
   event.preventDefault();
@@ -607,6 +807,56 @@ elements.manualForm.addEventListener('submit', async event => {
 });
 
 elements.completionContent.addEventListener('submit', async event => {
+  if (event.target.id === 'plan-form') {
+    event.preventDefault();
+    const fields = [...event.target.querySelectorAll('.deliverable-fields')];
+    const items = fields.map(field => ({
+      description: field.querySelector('[name="description"]').value.trim(),
+      acceptance_criteria: field.querySelector('[name="acceptance_criteria"]').value.trim()
+    }));
+    if (!window.confirm('Send this checklist for the other participant to review?')) return;
+    try {
+      agreement = await request(`/cases/${savedAccess.id}/delivery-plan`, 'POST', {items});
+      renderAgreement();
+      notify('Checklist sent. The other participant must approve it before delivery can be recorded.');
+    } catch (error) { notify(error.message, true); }
+    return;
+  }
+  if (event.target.id === 'plan-rejection') {
+    event.preventDefault();
+    const plan = agreement.delivery_plan;
+    try {
+      agreement = await request(`/cases/${savedAccess.id}/delivery-plan/${plan.id}/respond`, 'POST', {
+        accepted: false, note: event.target.elements.note.value.trim()
+      });
+      renderAgreement();
+      notify('Checklist feedback sent. A new checklist can now be proposed.');
+    } catch (error) { notify(error.message, true); }
+    return;
+  }
+  const disputeForm = event.target.closest('[data-item-dispute]');
+  if (disputeForm) {
+    event.preventDefault();
+    try {
+      agreement = await request(`/cases/${savedAccess.id}/delivery-items/${disputeForm.dataset.itemDispute}/review`, 'POST', {
+        accepted: false, note: disputeForm.elements.note.value.trim()
+      });
+      renderAgreement();
+      notify('Correction request sent. The agreed item remains outstanding.');
+    } catch (error) { notify(error.message, true); }
+    return;
+  }
+  const itemForm = event.target.closest('[data-item-submit]');
+  if (itemForm) {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(itemForm).entries());
+    try {
+      agreement = await request(`/cases/${savedAccess.id}/delivery-items/${itemForm.dataset.itemSubmit}/submit`, 'POST', values);
+      renderAgreement();
+      notify('Deliverable submitted. Waiting for the other participant to review it.');
+    } catch (error) { notify(error.message, true); }
+    return;
+  }
   if (event.target.id === 'dispute-form') {
     event.preventDefault();
     try {
@@ -627,6 +877,47 @@ elements.completionContent.addEventListener('submit', async event => {
 });
 
 elements.completionContent.addEventListener('click', async event => {
+  const planAction = event.target.closest('button[data-plan]');
+  if (planAction) {
+    const action = planAction.dataset.plan;
+    if (action === 'add') {
+      const wrap = elements.completionContent.querySelector('#plan-items');
+      if (!wrap || wrap.children.length >= 10) return;
+      const block = document.createElement('div');
+      block.className = 'deliverable-fields';
+      block.innerHTML = `<label>Deliverable<input name="description" required minlength="5" maxlength="250"></label>
+        <label>How it will be accepted<textarea name="acceptance_criteria" required minlength="5" maxlength="350" rows="2"></textarea></label>
+        <button type="button" class="text-button" data-plan="remove">Remove item</button>`;
+      wrap.appendChild(block);
+    } else if (action === 'remove') {
+      planAction.closest('.deliverable-fields')?.remove();
+    } else if (action === 'decline') {
+      elements.completionContent.querySelector('#plan-rejection')?.classList.toggle('hidden');
+    } else if (action === 'approve') {
+      if (!window.confirm('Approve this delivery checklist and its acceptance criteria?')) return;
+      try {
+        agreement = await request(`/cases/${savedAccess.id}/delivery-plan/${agreement.delivery_plan.id}/respond`, 'POST', {accepted:true,note:''});
+        renderAgreement();
+        notify('Delivery checklist approved. Each item can now be tracked.');
+      } catch (error) { notify(error.message, true); }
+    }
+    return;
+  }
+  const showDispute = event.target.closest('[data-show-dispute]');
+  if (showDispute) {
+    elements.completionContent.querySelector(`#dispute-${showDispute.dataset.showDispute}`)?.classList.toggle('hidden');
+    return;
+  }
+  const reviewItem = event.target.closest('[data-item-review]');
+  if (reviewItem) {
+    if (!window.confirm('Have you checked this item against its acceptance criteria?')) return;
+    try {
+      agreement = await request(`/cases/${savedAccess.id}/delivery-items/${reviewItem.dataset.itemReview}/review`, 'POST', {accepted:true,note:''});
+      renderAgreement();
+      notify(agreement.status === 'completed' ? 'Every deliverable was accepted. The agreement is complete.' : 'Deliverable accepted.');
+    } catch (error) { notify(error.message, true); }
+    return;
+  }
   const action = event.target.closest('button[data-delivery]')?.dataset.delivery;
   if (!action) return;
   if (action === 'dispute') {
@@ -751,8 +1042,20 @@ async function loadDocument(version) {
     return `<div class="paper-signoff"><strong>${escapeHtml(name)}</strong><span>${role} · Accepted ${escapeHtml(formatDate(approved))}</span></div>`;
   }).join('');
   const delivery = agreement?.completion;
-  elements.documentDelivery.innerHTML = documentRecord.current && delivery
+  const plan = agreement?.delivery_plan;
+  const checklist = documentRecord.current && plan?.status === 'active'
+    ? `<h2>Delivery checklist</h2><p class="muted-copy">${plan.accepted_count} of ${plan.total_count} items accepted.</p>${plan.items.map(item => `
+      <div class="paper-checklist-item"><strong>${escapeHtml(item.description)}</strong>
+        <p>Acceptance criteria: ${escapeHtml(item.acceptance_criteria)}</p>
+        <p>Status: ${escapeHtml(checklistStatus(item.status))}</p>
+        ${item.statement ? `<p>Submitted work: ${escapeHtml(item.statement)}</p>` : ''}
+        ${item.reference ? `<p>Evidence reference: ${escapeHtml(item.reference)}</p>` : ''}
+        ${item.review_note ? `<p>Review note: ${escapeHtml(item.review_note)}</p>` : ''}</div>`).join('')}
+      <p class="muted-copy">Participant approvals record acceptance of the submitted evidence; the platform does not independently certify workmanship, identity or legal validity.</p>`
+    : '';
+  const legacy = documentRecord.current && delivery
     ? `<h2>Delivery record</h2><p>${escapeHtml(delivery.statement)}</p><p class="muted-copy">Status: ${escapeHtml(delivery.status)}${delivery.review_note ? ` · ${escapeHtml(delivery.review_note)}` : ''}</p>` : '';
+  elements.documentDelivery.innerHTML = checklist || legacy;
   elements.documentVersion.value = String(documentRecord.version);
 }
 
@@ -808,7 +1111,7 @@ async function initialize() {
     elements.analysisStatus.textContent = 'About';
     elements.previewDescription.textContent = usingMeta
       ? 'This workspace uses Meta Muse Spark to review new messages. Model output is checked before any proposed changes are saved. API usage may incur charges.'
-      : 'Local development preview. Message analysis runs in offline demonstration mode, and invitation links work only on this running server.';
+      : health.restricted_demo ? 'This is a restricted competition demonstration using synthetic agreements. It is not an identity-verified or legally certified service.' : 'Local development preview. Message analysis runs in offline demonstration mode, and invitation links work only on this running server.';
     const params = new URLSearchParams(window.location.hash.slice(1));
     if (params.get('case') && params.get('key') && ['a', 'b'].includes(params.get('role'))) {
       const role = params.get('role');
@@ -841,7 +1144,8 @@ async function refreshInBackground() {
   try {
     const fresh = await request(`/cases/${savedAccess.id}`);
     const relevant = value => JSON.stringify([value.status, value.terms, value.proposals,
-      value.completion, value.history.length, value.offer_revision, value.understanding]);
+      value.completion, value.delivery_plan, value.history.length, value.offer_revision, value.understanding,
+      value.conversation?.messages?.length, value.conversation?.review_id]);
     if (relevant(fresh) !== relevant(agreement)) {
       agreement = fresh;
       renderAgreement();
