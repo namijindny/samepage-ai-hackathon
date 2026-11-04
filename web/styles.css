@@ -332,3 +332,13 @@ form > input, form > textarea { margin-bottom: 18px; }
 .evidence-insight strong {color:#16498d;}
 .evidence-insight p {line-height:1.5; margin:9px 0;}
 .evidence-insight small {display:block;color:#60738c;line-height:1.5;}
+
+/* Live evidence review: show honest activity, without fabricated progress percentages. */
+.evidence-review-action {margin: 14px 0;}
+.evidence-review-progress {margin-top: 11px; padding: 12px 14px; border: 1px solid #c9dff8; border-radius: 10px; background: #f4f9ff; color: #274c79; font-size: 12px;}
+.evidence-review-progress strong {display:block; font-size: 13px;}
+.evidence-review-progress p {margin: 6px 0; line-height: 1.5;}
+.evidence-review-progress small {color: #607790;}
+.evidence-spinner {display:inline-block; width: 14px; height: 14px; vertical-align: -2px; border: 2px solid #9ab7db; border-top-color:#1462d0; border-radius: 50%; animation: evidence-spin .85s linear infinite;}
+@keyframes evidence-spin {to {transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce) {.evidence-spinner {animation:none; border-top-color:#1462d0}}

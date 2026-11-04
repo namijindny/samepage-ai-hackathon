@@ -104,6 +104,7 @@ let editUnderstanding = false;
 let understandingRevision = null;
 let conversationReviewPending = false;
 let evidenceObjectUrls = [];
+let evidenceReviewPendingId = null;
 
 async function encodeScreenshot(file) {
   if (file.size > 2000000) throw new Error('Each screenshot must be smaller than 2 MB.');
@@ -492,7 +493,18 @@ function renderChecklist() {
       <p><b>Not verified:</b> ${escapeHtml(item.evidence_insight.uncertain)}</p>
       <p><b>Check next:</b> ${escapeHtml(item.evidence_insight.next_check)}</p>
       <small>AI observations, not proof of authenticity. You decide whether to accept.</small></div>` : '';
-    const aiAction = canReview && item.screenshots?.length && !item.evidence_insight ? `<button type="button" class="button button-secondary" data-evidence-check="${escapeHtml(item.id)}">✦ Check evidence with AI</button>` : '';
+    const reviewingEvidence = evidenceReviewPendingId === item.id;
+    const aiAction = canReview && item.screenshots?.length && !item.evidence_insight ? `
+      <div class="evidence-review-action">
+        <button type="button" class="button button-secondary" data-evidence-check="${escapeHtml(item.id)}" ${evidenceReviewPendingId ? 'disabled' : ''}>
+          ${reviewingEvidence ? '<span class="evidence-spinner" aria-hidden="true"></span> Checking evidence…' : '✦ Check evidence with AI'}
+        </button>
+        ${reviewingEvidence ? `<div class="evidence-review-progress" role="status" aria-live="polite">
+          <strong>AI review in progress</strong>
+          <p>Examining the screenshot against the agreed criteria${item.reference?.startsWith('https://') ? ' and checking available public website text' : ''}. No decision will be made automatically.</p>
+          <small>It may take a moment. You can still accept or request changes yourself.</small>
+        </div>` : ''}
+      </div>` : '';
 
     const review = item.review_note ? `<p class="delivery-outcome">Review: ${escapeHtml(item.review_note)}</p>` : '';
     const entry = canSubmit ? `<form data-item-submit="${escapeHtml(item.id)}" class="nested-form">
@@ -500,7 +512,7 @@ function renderChecklist() {
       <label>Website link or reference (optional)<input name="reference" maxlength="500" placeholder="https://example.com/finished-page"></label>
       <label class="evidence-upload">Attach screenshots (optional, up to two)<input type="file" name="screenshots" accept="image/png,image/jpeg,image/webp" multiple><small>PNG, JPG or WebP · 2 MB each</small></label>
       <div class="evidence-upload-preview" aria-live="polite"></div>
-      <button type="submit" class="button button-primary">${item.status === 'disputed' ? 'Submit corrected work' : 'Submit this item'}</button></form>` : '';
+      <button type="submit" class="button button-primary">${item.status === 'disputed' ? 'Resubmit corrected work' : 'Submit work for review'}</button></form>` : '';
     const decision = canReview ? `<div class="form-actions"><button type="button" class="button button-primary" data-item-review="${escapeHtml(item.id)}" data-accept="true">Accept item</button><button type="button" class="button button-secondary" data-show-dispute="${escapeHtml(item.id)}">Request correction</button></div>
       <form class="nested-form hidden" id="dispute-${escapeHtml(item.id)}" data-item-dispute="${escapeHtml(item.id)}">
         <label>What needs correction?<textarea name="note" minlength="5" maxlength="1000" required rows="2"></textarea></label><button type="submit" class="button button-secondary">Send correction request</button></form>` : '';
@@ -515,8 +527,14 @@ function renderChecklist() {
   const completed = plan.accepted_count || 0;
   const total = plan.total_count || items.length;
   const finished = completed === total;
+  const roleHint = finished && selectedParty === responsible
+    ? '<p class="muted-copy">Your submitted work was accepted. This delivery is complete, so there is nothing further to submit.</p>'
+    : finished ? '<p class="muted-copy">You accepted the submitted work. The delivery record is now complete.</p>'
+    : selectedParty === responsible
+      ? '<p class="muted-copy">To send finished work, use <strong>Submit work for review</strong> below each outstanding item. Screenshots can be attached in that form.</p>'
+      : `<p class="muted-copy">${escapeHtml(provider)} submits evidence for each item. You can review the images, accept the item or request a correction.</p>`;
   return `${intro}<div class="delivery-progress"><strong>${completed} of ${total} items accepted</strong><span>${finished ? 'All agreed work reviewed' : 'Every item must be accepted before completion'}</span></div>
-    ${list}${finished ? '<p class="delivery-outcome">All deliverables were accepted by the reviewing participant. The delivery record is preserved in the agreement history.</p>' : ''}`;
+    ${roleHint}${list}${finished ? '<p class="delivery-outcome">All deliverables were accepted by the reviewing participant. The delivery record is preserved in the agreement history.</p>' : ''}`;
 }
 
 function renderCompletion() {
@@ -945,16 +963,17 @@ elements.completionContent.addEventListener('change', event => {
 elements.completionContent.addEventListener('click', async event => {
   const evidenceCheck = event.target.closest('button[data-evidence-check]');
   if (evidenceCheck) {
-    evidenceCheck.disabled = true;
-    evidenceCheck.textContent = 'Checking evidence…';
+    if (evidenceReviewPendingId) return;
+    evidenceReviewPendingId = evidenceCheck.dataset.evidenceCheck;
+    renderAgreement();
     try {
-      agreement = await request(`/cases/${savedAccess.id}/delivery-items/${evidenceCheck.dataset.evidenceCheck}/check-evidence`, 'POST', {});
-      renderAgreement();
-      notify('AI evidence insight is ready. Acceptance remains your decision.');
+      agreement = await request(`/cases/${savedAccess.id}/delivery-items/${evidenceReviewPendingId}/check-evidence`, 'POST', {});
+      notify('AI evidence insight is ready. You decide whether to accept the work.');
     } catch (error) {
       notify(error.message, true);
-      evidenceCheck.disabled = false;
-      evidenceCheck.textContent = '✦ Check evidence with AI';
+    } finally {
+      evidenceReviewPendingId = null;
+      renderAgreement();
     }
     return;
   }
