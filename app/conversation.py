@@ -165,7 +165,7 @@ def recover_explicit_deadline(review: dict, latest: dict, current: dict) -> dict
 _SIMPLE_CONFIRMATION = re.compile(r"\s*(?:i agree|i accept|agreed|accepted|sounds good)[.!]?\s*", re.IGNORECASE)
 _CURRENCY_AMOUNT = r"(?:\$|USD\s*|₦|NGN\s*|£|GBP\s*|€|EUR\s*)\s*[\d,]+(?:\.00)?"
 _CONDITIONAL_TOTAL_PRICE = re.compile(
-    r"\b(?:the\s+)?(?:price|total\s+price|cost|fee|total)\s+"
+    r"\b(?:the\s+)?(?:price|total\s+price|cost|fee|total|amount)\s+"
     r"(?:(?:will|would|must|should)\s+)?(?:(?:then|now)\s+)?"
     r"(?:be|become)\s+(?P<amount>" + _CURRENCY_AMOUNT + r")(?=\W|$)",
     re.IGNORECASE,

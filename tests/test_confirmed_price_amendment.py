@@ -100,3 +100,58 @@ def test_no_saved_confirmation_quote_stays_non_actionable(client, monkeypatch):
     client.post(root+'/conversation/review',headers=a)
     assert not client.get(root,headers=a).json()['conversation']['review']['changes']
     assert client.post(root+'/conversation/prepare-amendment',headers=a).status_code == 409
+
+
+def test_amount_should_be_price_confirmation_saved_review(client, monkeypatch):
+    """Reported live wording can produce a DRAFT, never an automatic change."""
+    created = client.post('/api/cases', json={
+        'title': 'Website project', 'party_a': 'Alex Morgan', 'party_b': 'Sam Lee', **TERMS,
+    }).json()
+    root = f'/api/cases/{created["case_id"]}'
+    a, b = {'X-Party-Key': created['party_a_key']}, {'X-Party-Key': created['party_b_key']}
+    assert client.post(root + '/confirm', headers=b).status_code == 200
+    transcript = [
+        (b, 'I will use python to develop the website'),
+        (a, 'No, please use PHP Laravel framework for my project.'),
+        (b, 'In this case the amount should be $700'),
+        (a, 'I agree.'),
+    ]
+    for auth, message in transcript:
+        res = client.post(root + '/conversation/messages', headers=auth, json={'message': message})
+        assert res.status_code == 201, res.text
+    prior, last = res.json()['conversation']['messages'][-2:]
+    prior_body = prior['body']
+    def stored_meta_review(*_):
+        return {
+            'last_message_id': last['id'], 'last_author': last['author'],
+            'intent': 'no_change', 'changes': [],
+            'explanation': 'Confirmation is not a new proposal',
+            'observations': [
+                {'message_id': prior['id'], 'author': 'b', 'kind': 'condition',
+                 'quote': prior_body, 'meaning': 'Conditions Laravel work on $700'},
+                {'message_id': last['id'], 'author': 'a', 'kind': 'confirmation',
+                 'quote': 'I agree.', 'meaning': 'Accepts the price condition in chat'},
+            ], 'mode': 'meta_muse_spark_1_3'
+        }
+    monkeypatch.setattr('app.main.analyze', stored_meta_review)
+    assert client.post(root + '/conversation/review', headers=a).status_code == 200
+    current = client.get(root, headers=a).json()
+    assert current['terms']['price'] == '$600'
+    assert current['conversation']['review']['changes'][0]['new_value'] == '$700'
+    monkeypatch.setattr('app.main.analyze', lambda *_: (_ for _ in ()).throw(AssertionError('Should not call Meta again')))
+    draft = client.post(root + '/conversation/prepare-amendment', headers=a)
+    assert draft.status_code == 200, draft.text
+    assert draft.json()['terms']['price'] == '$600'
+    proposal = next(x for x in draft.json()['proposals'] if x['status']=='pending')
+    assert proposal['changes'][0]['new_value'] == '$700'
+    accepted = client.post(root + f'/proposals/{proposal["id"]}/approve', headers=b)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()['terms']['price'] == '$700'
+
+
+def test_amount_should_be_requires_proper_quote():
+    previous = {**PREV, 'body': 'In this case the amount should be $700'}
+    observed = report(previous=previous)
+    assert recover_confirmed_price(observed, previous, LAST, TERMS)['changes'][0]['new_value'] == '$700'
+    observed['observations'][0]['quote'] = 'fabricated quote'
+    assert not recover_confirmed_price(observed, previous, LAST, TERMS)['changes']

@@ -682,8 +682,14 @@ elements.conversationForm.addEventListener('submit', async event => {
   finally { submit.disabled = false; }
 });
 
-function setConversationFeedback(message, isError = false) {
-  elements.conversationFeedback.textContent = message;
+function setConversationFeedback(message, isError = false, reviewing = false) {
+  if (reviewing) {
+    elements.conversationFeedback.innerHTML = `<span class="evidence-spinner" aria-hidden="true"></span>
+      <span><strong>${escapeHtml(message)}</strong><small>Looking for proposals, conditions and confirmations. Checking quotations against the conversation. Agreement terms remain unchanged until both participants approve.</small></span>`;
+  } else {
+    elements.conversationFeedback.textContent = message;
+  }
+  elements.conversationFeedback.classList.toggle('conversation-feedback-pending', reviewing);
   elements.conversationFeedback.classList.toggle('hidden', !message);
   elements.conversationFeedback.classList.toggle('error', isError);
 }
@@ -692,13 +698,13 @@ elements.conversationReview.addEventListener('click', async () => {
   if (conversationReviewPending || !agreement?.conversation?.messages?.length) return;
   conversationReviewPending = true;
   elements.conversationReview.disabled = true;
-  elements.conversationReview.textContent = 'Reviewing conversation…';
-  setConversationFeedback('Checking the conversation with Meta. This can take up to a minute.');
+  elements.conversationReview.innerHTML = '<span class="evidence-spinner" aria-hidden="true"></span> Reviewing conversation…';
+  setConversationFeedback('Reviewing the conversation with Meta', false, true);
   clearNotice();
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 70000);
   const slowNotice = window.setTimeout(() => {
-    setConversationFeedback('Still checking with Meta. Your messages and agreement are unchanged.');
+    setConversationFeedback('Still reviewing with Meta', false, true);
   }, 15000);
   try {
     agreement = await request(`/cases/${savedAccess.id}/conversation/review`, 'POST', undefined, {signal: controller.signal});
