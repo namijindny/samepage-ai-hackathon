@@ -834,7 +834,7 @@ def check_visual_evidence(case_id: str, item_id: str, x_party_key: str | None = 
             images.append((record['name'],stored.read_bytes()))
         report=evidence.review_with_meta(images,*payload[:3])
     except Exception as exc:
-        logger.warning('Visual evidence review unavailable: %s',type(exc).__name__)
+        logger.warning('Visual evidence review unavailable: %s (status %s, reason %s)',type(exc).__name__,getattr(exc,'status_code','unknown'),getattr(exc,'reason','unknown'))
         raise HTTPException(503,conversation_error_message(exc)) from exc
     with s.connection() as db:
         db.execute('BEGIN IMMEDIATE')

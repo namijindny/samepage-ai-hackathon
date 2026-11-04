@@ -345,3 +345,15 @@ form > input, form > textarea { margin-bottom: 18px; }
 .evidence-spinner {display:inline-block; width: 14px; height: 14px; vertical-align: -2px; border: 2px solid #9ab7db; border-top-color:#1462d0; border-radius: 50%; animation: evidence-spin .85s linear infinite;}
 @keyframes evidence-spin {to {transform:rotate(360deg)}}
 @media (prefers-reduced-motion: reduce) {.evidence-spinner {animation:none; border-top-color:#1462d0}}
+
+.evidence-review-error {margin-top: 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid #e3a5a5; background: #fff5f5; color: #802121; font-size: 12px;}
+.evidence-review-error strong {display:block; font-size: 13px;}
+.evidence-review-error p {margin: 6px 0; line-height: 1.5;}
+.evidence-review-error small {color: #864545;}
+
+/* Action-specific feedback stays beside the failing form or button. */
+.inline-action-error {
+  margin: 10px 0 14px; padding: 11px 13px; border-radius: 9px;
+  border: 1px solid #e3a5a5; background: #fff5f5; color: #802121;
+  font-size: 13px; line-height: 1.5; overflow-wrap: anywhere;
+}

@@ -105,6 +105,7 @@ let understandingRevision = null;
 let conversationReviewPending = false;
 let evidenceObjectUrls = [];
 let evidenceReviewPendingId = null;
+let evidenceReviewError = null;
 
 async function encodeScreenshot(file) {
   if (file.size > 2000000) throw new Error('Each screenshot must be smaller than 2 MB.');
@@ -153,6 +154,27 @@ function notify(message, isError = false) {
 
 function clearNotice() {
   elements.notice.classList.add('hidden');
+  document.querySelectorAll('.inline-action-error').forEach(element => element.remove());
+}
+
+// Show actionable failures at the control that triggered them, not at page top.
+function showActionError(message, anchor) {
+  if (!anchor?.isConnected) {
+    notify(message, true); // App-level fallback when the original control is gone.
+    return;
+  }
+  const region = anchor.closest('form, .change-card, .deliverable-item, .conversation-review-header, .confirmation-controls, .document-toolbar, .inline-details') || anchor;
+  const parent = region.parentElement;
+  if (!parent) {
+    notify(message, true);
+    return;
+  }
+  parent.querySelectorAll(':scope > .inline-action-error').forEach(element => element.remove());
+  const error = document.createElement('p');
+  error.className = 'inline-action-error';
+  error.setAttribute('role', 'alert');
+  error.textContent = message;
+  region.insertAdjacentElement('afterend', error);
 }
 
 function readSavedAccess() {
@@ -494,6 +516,9 @@ function renderChecklist() {
       <p><b>Check next:</b> ${escapeHtml(item.evidence_insight.next_check)}</p>
       <small>AI observations, not proof of authenticity. You decide whether to accept.</small></div>` : '';
     const reviewingEvidence = evidenceReviewPendingId === item.id;
+    const evidenceFailure = evidenceReviewError?.itemId === item.id
+      ? `<div class="evidence-review-error" role="alert"><strong>AI review unavailable</strong><p>${escapeHtml(evidenceReviewError.message)}</p><small>No decision was made. You can still accept the work or request a correction without AI.</small></div>`
+      : '';
     const aiAction = canReview && item.screenshots?.length && !item.evidence_insight ? `
       <div class="evidence-review-action">
         <button type="button" class="button button-secondary" data-evidence-check="${escapeHtml(item.id)}" ${evidenceReviewPendingId ? 'disabled' : ''}>
@@ -504,6 +529,7 @@ function renderChecklist() {
           <p>Examining the screenshot against the agreed criteria${item.reference?.startsWith('https://') ? ' and checking available public website text' : ''}. No decision will be made automatically.</p>
           <small>It may take a moment. You can still accept or request changes yourself.</small>
         </div>` : ''}
+        ${evidenceFailure}
       </div>` : '';
 
     const review = item.review_note ? `<p class="delivery-outcome">Review: ${escapeHtml(item.review_note)}</p>` : '';
@@ -678,7 +704,7 @@ elements.conversationForm.addEventListener('submit', async event => {
     });
     elements.conversationForm.reset();
     renderAgreement();
-  } catch (error) { notify(error.message, true); }
+  } catch (error) { showActionError(error.message, elements.conversationForm); }
   finally { submit.disabled = false; }
 });
 
@@ -738,7 +764,7 @@ elements.conversationResult.addEventListener('click', async event => {
     notify('Amendment sent. The other person can now review it. Your agreed terms have not changed.');
     elements.proposals.scrollIntoView({behavior: 'smooth', block: 'center'});
   } catch (error) {
-    notify(error.message, true);
+    showActionError(error.message, button);
     button.disabled = false;
   }
 });
@@ -759,7 +785,7 @@ elements.createForm.addEventListener('submit', async event => {
     saveAccess();
     await refreshAgreement();
   } catch (error) {
-    notify(error.message, true);
+    showActionError(error.message, elements.createForm);
   } finally {
     elements.createButton.disabled = false;
   }
@@ -779,7 +805,7 @@ elements.partySwitch.addEventListener('change', async event => {
   selectedParty = event.target.value;
   clearNotice();
   try { await refreshAgreement(); }
-  catch (error) { notify(error.message, true); }
+  catch (error) { showActionError(error.message, elements.partySwitch); }
 });
 
 elements.confirmButton.addEventListener('click', async () => {
@@ -790,7 +816,7 @@ elements.confirmButton.addEventListener('click', async () => {
     renderAgreement();
     notify('Offer accepted. The agreement is now active.');
   } catch (error) {
-    notify(error.message, true);
+    showActionError(error.message, elements.confirmButton);
     renderAgreement();
   }
 });
@@ -806,7 +832,7 @@ elements.declineForm.addEventListener('submit', async event => {
     agreement = await request(`/cases/${savedAccess.id}/decline`, 'POST', {message});
     renderAgreement();
     notify('Offer declined. No agreement was activated.');
-  } catch (error) { notify(error.message, true); }
+  } catch (error) { showActionError(error.message, elements.declineForm); }
 });
 
 elements.understandingRequest.addEventListener('click', async () => {
@@ -815,7 +841,7 @@ elements.understandingRequest.addEventListener('click', async () => {
     agreement = await request(`/cases/${savedAccess.id}/understanding/request`, 'POST');
     renderAgreement();
     notify('Understanding check started. Ask the other person to complete their response.');
-  } catch (error) { notify(error.message, true); }
+  } catch (error) { showActionError(error.message, elements.understandingRequest); }
 });
 
 elements.understandingEdit.addEventListener('click', () => {
@@ -850,7 +876,7 @@ elements.understandingForm.addEventListener('submit', async event => {
     notify(current.ready
       ? 'Both responses match the offer. The reviewer can now accept it.'
       : understandingStatus(current));
-  } catch (error) { notify(error.message, true); }
+  } catch (error) { showActionError(error.message, elements.understandingForm); }
   finally { submit.disabled = false; }
 });
 
@@ -865,7 +891,7 @@ elements.counterForm.addEventListener('submit', async event => {
     notify('Counteroffer sent. The other person can accept, counter again or decline.');
   } catch (error) {
     const unchanged = error.message.includes('Change at least one term');
-    notify(unchanged ? 'To accept the latest offer, use Accept. To counter, change the price, deadline or scope.' : error.message, true);
+    showActionError(unchanged ? 'To accept the latest offer, use Accept. To counter, change the price, deadline or scope.' : error.message, elements.counterForm);
   }
 });
 
@@ -879,7 +905,7 @@ elements.manualForm.addEventListener('submit', async event => {
     elements.manualPanel.open = false;
     renderAgreement();
     notify('Proposed terms sent. The current agreement stays unchanged until accepted.');
-  } catch (error) { notify(error.message, true); }
+  } catch (error) { showActionError(error.message, elements.manualForm); }
 });
 
 elements.completionContent.addEventListener('submit', async event => {
@@ -895,7 +921,7 @@ elements.completionContent.addEventListener('submit', async event => {
       agreement = await request(`/cases/${savedAccess.id}/delivery-plan`, 'POST', {items});
       renderAgreement();
       notify('Checklist sent. The other participant must approve it before delivery can be recorded.');
-    } catch (error) { notify(error.message, true); }
+    } catch (error) { showActionError(error.message, event.target); }
     return;
   }
   if (event.target.id === 'plan-rejection') {
@@ -907,7 +933,7 @@ elements.completionContent.addEventListener('submit', async event => {
       });
       renderAgreement();
       notify('Checklist feedback sent. A new checklist can now be proposed.');
-    } catch (error) { notify(error.message, true); }
+    } catch (error) { showActionError(error.message, event.target); }
     return;
   }
   const disputeForm = event.target.closest('[data-item-dispute]');
@@ -919,7 +945,7 @@ elements.completionContent.addEventListener('submit', async event => {
       });
       renderAgreement();
       notify('Correction request sent. The agreed item remains outstanding.');
-    } catch (error) { notify(error.message, true); }
+    } catch (error) { showActionError(error.message, disputeForm); }
     return;
   }
   const itemForm = event.target.closest('[data-item-submit]');
@@ -935,7 +961,7 @@ elements.completionContent.addEventListener('submit', async event => {
       agreement = await request(`/cases/${savedAccess.id}/delivery-items/${itemForm.dataset.itemSubmit}/submit`, 'POST', values);
       renderAgreement();
       notify('Deliverable submitted. Waiting for the other participant to review it.');
-    } catch (error) { notify(error.message, true); }
+    } catch (error) { showActionError(error.message, itemForm); }
     finally { submitButton.disabled = false; }
     return;
   }
@@ -944,7 +970,7 @@ elements.completionContent.addEventListener('submit', async event => {
     try {
       agreement = await request(`/cases/${savedAccess.id}/completion/review`, 'POST', {accepted: false, note: event.target.elements.note.value.trim()});
       renderAgreement();
-    } catch (error) { notify(error.message, true); }
+    } catch (error) { showActionError(error.message, event.target); }
     return;
   }
   if (!['delivery-form','resubmit-form'].includes(event.target.id)) return;
@@ -955,7 +981,7 @@ elements.completionContent.addEventListener('submit', async event => {
     agreement = await request(`/cases/${savedAccess.id}${endpoint}`, 'POST', payload);
     renderAgreement();
     notify('Delivery sent for the other participant to review.');
-  } catch (error) { notify(error.message, true); }
+  } catch (error) { showActionError(error.message, event.target); }
 });
 
 elements.completionContent.addEventListener('change', event => {
@@ -970,13 +996,21 @@ elements.completionContent.addEventListener('click', async event => {
   const evidenceCheck = event.target.closest('button[data-evidence-check]');
   if (evidenceCheck) {
     if (evidenceReviewPendingId) return;
-    evidenceReviewPendingId = evidenceCheck.dataset.evidenceCheck;
+    const itemId = evidenceCheck.dataset.evidenceCheck;
+    evidenceReviewError = null;
+    evidenceReviewPendingId = itemId;
     renderAgreement();
     try {
-      agreement = await request(`/cases/${savedAccess.id}/delivery-items/${evidenceReviewPendingId}/check-evidence`, 'POST', {});
+      const updated = await request(`/cases/${savedAccess.id}/delivery-items/${itemId}/check-evidence`, 'POST', {});
+      const reviewed = updated.delivery_plan?.items?.find(item => item.id === itemId);
+      if (!reviewed?.evidence_insight) {
+        throw new Error('The server returned no AI evidence insight. The work has not been accepted.');
+      }
+      agreement = updated;
       notify('AI evidence insight is ready. You decide whether to accept the work.');
     } catch (error) {
-      notify(error.message, true);
+      const message = error?.message || 'The evidence check could not finish.';
+      evidenceReviewError = { itemId, message };
     } finally {
       evidenceReviewPendingId = null;
       renderAgreement();
@@ -1005,7 +1039,7 @@ elements.completionContent.addEventListener('click', async event => {
         agreement = await request(`/cases/${savedAccess.id}/delivery-plan/${agreement.delivery_plan.id}/respond`, 'POST', {accepted:true,note:''});
         renderAgreement();
         notify('Delivery checklist approved. Each item can now be tracked.');
-      } catch (error) { notify(error.message, true); }
+      } catch (error) { showActionError(error.message, planAction); }
     }
     return;
   }
@@ -1021,7 +1055,7 @@ elements.completionContent.addEventListener('click', async event => {
       agreement = await request(`/cases/${savedAccess.id}/delivery-items/${reviewItem.dataset.itemReview}/review`, 'POST', {accepted:true,note:''});
       renderAgreement();
       notify(agreement.status === 'completed' ? 'Every deliverable was accepted. The agreement is complete.' : 'Deliverable accepted.');
-    } catch (error) { notify(error.message, true); }
+    } catch (error) { showActionError(error.message, reviewItem); }
     return;
   }
   const action = event.target.closest('button[data-delivery]')?.dataset.delivery;
@@ -1034,7 +1068,7 @@ elements.completionContent.addEventListener('click', async event => {
   try {
     agreement = await request(`/cases/${savedAccess.id}/completion/review`, 'POST', {accepted: true, note: ''});
     renderAgreement();
-  } catch (error) { notify(error.message, true); }
+  } catch (error) { showActionError(error.message, event.target.closest('button[data-delivery]')); }
 });
 
 elements.messageForm.addEventListener('submit', async event => {
@@ -1051,7 +1085,7 @@ elements.messageForm.addEventListener('submit', async event => {
     }
     showFinding(result.finding, result.proposal_created);
   } catch (error) {
-    notify(error.message, true);
+    showActionError(error.message, elements.messageForm);
   } finally {
     elements.analyzeButton.disabled = !agreement?.active;
   }
@@ -1067,7 +1101,7 @@ elements.proposals.addEventListener('click', async event => {
     renderAgreement();
     elements.finding.classList.add('hidden');
   } catch (error) {
-    notify(error.message, true);
+    showActionError(error.message, button);
     button.disabled = false;
   }
 });
@@ -1177,7 +1211,7 @@ async function openDocument() {
     elements.documentView.classList.remove('hidden');
     window.scrollTo(0, 0);
   } catch (error) {
-    notify(error.message, true);
+    showActionError(error.message, elements.viewDocument);
   }
 }
 
@@ -1189,7 +1223,7 @@ elements.documentBack.addEventListener('click', () => {
 });
 elements.documentVersion.addEventListener('change', async () => {
   try { await loadDocument(Number(elements.documentVersion.value)); }
-  catch (error) { notify(error.message, true); }
+  catch (error) { showActionError(error.message, elements.documentVersion); }
 });
 elements.documentPrint.addEventListener('click', () => window.print());
 

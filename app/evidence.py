@@ -18,6 +18,7 @@ from urllib.parse import urlsplit, quote
 from PIL import Image, UnidentifiedImageError
 from . import storage as s
 from .usage import reserve_request
+from .engine import MetaResponseError
 
 INSIGHT_SCHEMA = {
     'type': 'json_schema',
@@ -219,10 +220,15 @@ def review_with_meta(images, statement, criteria, url):
     for name,content in images:
         data='data:image/jpeg;base64,'+base64.b64encode(content).decode('ascii')
         parts.append({'type':'image_url','image_url':{'url':data}})
-    answer=client.chat.completions.create(model='muse-spark-1.3',messages=[{'role':'user','content':parts}],response_format=INSIGHT_SCHEMA,reasoning_effort='low',max_completion_tokens=1200)
-    if not answer.choices or not isinstance(answer.choices[0].message.content,str):
-        raise RuntimeError('Meta did not return an evidence insight')
-    message=answer.choices[0].message.content.strip()
+    answer=client.chat.completions.create(model='muse-spark-1.3',messages=[{'role':'user','content':parts}],response_format=INSIGHT_SCHEMA,reasoning_effort='low',max_completion_tokens=3500)
+    if not answer.choices:
+        raise MetaResponseError('missing_choice')
+    choice=answer.choices[0]
+    if getattr(choice,'finish_reason',None)=='length':
+        raise MetaResponseError('output_limit')
+    if not isinstance(choice.message.content,str) or not choice.message.content.strip():
+        raise MetaResponseError('empty_content')
+    message=choice.message.content.strip()
     try:
         raw=json.loads(message)
     except json.JSONDecodeError:
