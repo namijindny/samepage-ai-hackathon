@@ -55,3 +55,8 @@ Do not commit `.env` files, API keys, local databases, private invitations or re
 ## Restricted competition deployment
 
 A sample-only Railway deployment is documented in [docs/deployment.md](docs/deployment.md). It uses a separate demo password, HTTPS, a persistent SQLite volume and a small daily Meta API allowance. This access gate is **not** production user authentication. Do not upload real agreements or share the demo password publicly. See also the [three-minute video outline](docs/demo-video.md).
+
+
+## v1.1 — Visual delivery evidence
+
+Each deliverable can include two private screenshots and an optional public HTTPS page reference. The reviewer may use Meta Muse Spark 1.3 for concise, evidence-aware observations before deciding whether to accept work. A limited, DNS-pinned public HTML check can assist with textual consistency, not visual/functional proof. Original screenshots and audit entries survive resubmissions. Run `python -m pytest -q` for the automated tests; see `docs/visual-evidence.md` for privacy, VPS deployment and GitHub update instructions.

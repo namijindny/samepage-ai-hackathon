@@ -129,6 +129,24 @@
             </details>
           </section>
 
+          <section class="surface" id="conversation-panel" aria-labelledby="conversation-title">
+            <div class="section-heading heading-row">
+              <div><h2 id="conversation-title">Conversation</h2><p>Discuss the terms and keep decisions traceable.</p></div>
+            </div>
+            <div id="conversation-messages" class="conversation-messages" aria-live="polite"></div>
+            <form id="conversation-form" class="conversation-form">
+              <label for="conversation-message">Your message</label>
+              <textarea id="conversation-message" name="message" rows="3" maxlength="1200" required placeholder="Write a message about the agreement"></textarea>
+              <div class="form-actions"><button class="button button-primary" type="submit">Send message</button></div>
+            </form>
+            <div class="conversation-review-header">
+              <button type="button" class="button button-secondary" id="conversation-review-button">Review conversation with AI</button>
+              <span id="conversation-review-hint" class="muted-copy">Meta reviews the conversation; it cannot approve or change terms.</span>
+            </div>
+            <p id="conversation-review-feedback" class="conversation-feedback hidden" role="status" aria-live="polite"></p>
+            <div id="conversation-result" class="conversation-result hidden" aria-live="polite"></div>
+          </section>
+
           <section class="surface" id="message-panel" aria-labelledby="message-title">
             <div class="section-heading"><h2 id="message-title">Check a new message</h2><p>See whether it changes anything you've agreed.</p></div>
             <form id="message-form">

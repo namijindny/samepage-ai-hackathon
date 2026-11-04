@@ -88,6 +88,7 @@ const eventNames = {
   deliverable_resubmitted: 'Deliverable resubmitted',
   deliverable_disputed: 'Deliverable correction requested',
   deliverable_accepted: 'Deliverable accepted',
+  evidence_ai_reviewed: 'Evidence checked with AI',
   delivery_completed: 'All deliverables accepted',
   understanding_requested: 'Understanding check requested',
   understanding_submitted: 'Understanding shared',
@@ -102,6 +103,41 @@ let invitationLink = null;
 let editUnderstanding = false;
 let understandingRevision = null;
 let conversationReviewPending = false;
+let evidenceObjectUrls = [];
+
+async function encodeScreenshot(file) {
+  if (file.size > 2000000) throw new Error('Each screenshot must be smaller than 2 MB.');
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 32768) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+  }
+  return {name: file.name, data: btoa(binary)};
+}
+
+async function displayEvidenceImages() {
+  evidenceObjectUrls.forEach(url => URL.revokeObjectURL(url));
+  evidenceObjectUrls = [];
+  const accessKey = savedAccess?.keys?.[selectedParty];
+  if (!accessKey) return;
+  for (const img of elements.completionContent.querySelectorAll('img[data-evidence]')) {
+    const response = await fetch(`/api/cases/${encodeURIComponent(savedAccess.id)}/evidence/${encodeURIComponent(img.dataset.evidence)}`, {
+      headers: {'X-Party-Key': accessKey}, cache: 'no-store'
+    }).catch(() => null);
+    if (!response?.ok || !img.isConnected) continue;
+    const url = URL.createObjectURL(await response.blob());
+    evidenceObjectUrls.push(url);
+    if (img.isConnected) img.src = url;
+  }
+}
+
+function imageGallery(items, old = false) {
+  if (!items?.length) return '';
+  const images = items.map(image => `<img loading="lazy" data-evidence="${escapeHtml(image.id)}" alt="${escapeHtml(image.name)}">`).join('');
+  const gallery = `<div class="evidence-gallery${old ? ' earlier' : ''}">${images}</div>`;
+  return old ? `<details class="earlier-evidence"><summary>Previous screenshots</summary>${gallery}</details>` : gallery;
+}
+
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -443,18 +479,32 @@ function renderChecklist() {
     const head = `<div class="deliverable-head"><strong>${escapeHtml(item.description)}</strong><span class="deliverable-badge">${escapeHtml(checklistStatus(item.status))}</span></div>
       <p class="muted-copy">Accept when: ${escapeHtml(item.acceptance_criteria)}</p>`;
     if (plan.status === 'pending') return `<div class="deliverable-item">${head}</div>`;
-    const statement = item.statement ? `<div class="delivery-record"><strong>Delivery statement</strong><p>${escapeHtml(item.statement)}</p>${item.reference ? `<p class="muted-copy">Evidence reference: ${escapeHtml(item.reference)}</p>` : ''}</div>` : '';
-    const review = item.review_note ? `<p class="delivery-outcome">Review: ${escapeHtml(item.review_note)}</p>` : '';
+    const website = item.reference?.startsWith('https://')
+      ? `<a href="${escapeHtml(item.reference)}" target="_blank" rel="noopener noreferrer">Open the supplied website</a>`
+      : item.reference ? `<span>Reference: ${escapeHtml(item.reference)}</span>` : '';
     const canSubmit = selectedParty === responsible && ['pending','disputed'].includes(item.status);
     const canReview = selectedParty !== responsible && item.status === 'submitted';
+    const statement = item.statement ? `<div class="delivery-record"><strong>Delivery statement</strong><p>${escapeHtml(item.statement)}</p>
+      ${website ? `<p class="evidence-link">${website}</p>` : ''}
+      ${imageGallery(item.screenshots)}${imageGallery(item.earlier_screenshots,true)}</div>` : '';
+    const insight = item.evidence_insight ? `<div class="evidence-insight"><strong>✦ AI evidence insight</strong>
+      <p><b>What it shows:</b> ${escapeHtml(item.evidence_insight.visible)}</p>
+      <p><b>Not verified:</b> ${escapeHtml(item.evidence_insight.uncertain)}</p>
+      <p><b>Check next:</b> ${escapeHtml(item.evidence_insight.next_check)}</p>
+      <small>AI observations, not proof of authenticity. You decide whether to accept.</small></div>` : '';
+    const aiAction = canReview && item.screenshots?.length && !item.evidence_insight ? `<button type="button" class="button button-secondary" data-evidence-check="${escapeHtml(item.id)}">✦ Check evidence with AI</button>` : '';
+
+    const review = item.review_note ? `<p class="delivery-outcome">Review: ${escapeHtml(item.review_note)}</p>` : '';
     const entry = canSubmit ? `<form data-item-submit="${escapeHtml(item.id)}" class="nested-form">
       <label>What was completed?<textarea name="statement" required minlength="8" maxlength="1500" rows="2" placeholder="Describe what was done and how it meets the criteria"></textarea></label>
-      <label>Evidence reference (optional)<input name="reference" maxlength="500" placeholder="Receipt number, document reference or link"></label>
+      <label>Website link or reference (optional)<input name="reference" maxlength="500" placeholder="https://example.com/finished-page"></label>
+      <label class="evidence-upload">Attach screenshots (optional, up to two)<input type="file" name="screenshots" accept="image/png,image/jpeg,image/webp" multiple><small>PNG, JPG or WebP · 2 MB each</small></label>
+      <div class="evidence-upload-preview" aria-live="polite"></div>
       <button type="submit" class="button button-primary">${item.status === 'disputed' ? 'Submit corrected work' : 'Submit this item'}</button></form>` : '';
     const decision = canReview ? `<div class="form-actions"><button type="button" class="button button-primary" data-item-review="${escapeHtml(item.id)}" data-accept="true">Accept item</button><button type="button" class="button button-secondary" data-show-dispute="${escapeHtml(item.id)}">Request correction</button></div>
       <form class="nested-form hidden" id="dispute-${escapeHtml(item.id)}" data-item-dispute="${escapeHtml(item.id)}">
         <label>What needs correction?<textarea name="note" minlength="5" maxlength="1000" required rows="2"></textarea></label><button type="submit" class="button button-secondary">Send correction request</button></form>` : '';
-    return `<div class="deliverable-item">${head}${statement}${review}${entry}${decision}</div>`;
+    return `<div class="deliverable-item">${head}${statement}${insight}${review}${entry}${aiAction}${decision}</div>`;
   }).join('');
   if (plan.status === 'pending') {
     const canReview = selectedParty !== plan.author;
@@ -578,6 +628,7 @@ function renderAgreement() {
   renderChanges();
   renderHistory();
   renderCompletion();
+  displayEvidenceImages();
   renderConversation();
   if (!agreement.audit_valid) notify('This agreement’s history could not be verified. Please do not rely on it until the issue is resolved.', true);
 }
@@ -849,12 +900,18 @@ elements.completionContent.addEventListener('submit', async event => {
   const itemForm = event.target.closest('[data-item-submit]');
   if (itemForm) {
     event.preventDefault();
-    const values = Object.fromEntries(new FormData(itemForm).entries());
+    const values = {statement: itemForm.elements.statement.value.trim(), reference: itemForm.elements.reference.value.trim()};
+    const files = [...itemForm.querySelector('[name="screenshots"]').files];
+    const submitButton = itemForm.querySelector('[type="submit"]');
+    submitButton.disabled = true;
     try {
+      if (files.length > 2) throw new Error('Choose at most two screenshots.');
+      values.screenshots = await Promise.all(files.map(encodeScreenshot));
       agreement = await request(`/cases/${savedAccess.id}/delivery-items/${itemForm.dataset.itemSubmit}/submit`, 'POST', values);
       renderAgreement();
       notify('Deliverable submitted. Waiting for the other participant to review it.');
     } catch (error) { notify(error.message, true); }
+    finally { submitButton.disabled = false; }
     return;
   }
   if (event.target.id === 'dispute-form') {
@@ -876,7 +933,30 @@ elements.completionContent.addEventListener('submit', async event => {
   } catch (error) { notify(error.message, true); }
 });
 
+elements.completionContent.addEventListener('change', event => {
+  if (event.target.name !== 'screenshots') return;
+  const target = event.target.closest('form')?.querySelector('.evidence-upload-preview');
+  if (!target) return;
+  const files = [...event.target.files];
+  target.textContent = files.length ? `${files.length} screenshot${files.length === 1 ? '' : 's'} selected: ${files.map(f => f.name).join(', ')}` : '';
+});
+
 elements.completionContent.addEventListener('click', async event => {
+  const evidenceCheck = event.target.closest('button[data-evidence-check]');
+  if (evidenceCheck) {
+    evidenceCheck.disabled = true;
+    evidenceCheck.textContent = 'Checking evidence…';
+    try {
+      agreement = await request(`/cases/${savedAccess.id}/delivery-items/${evidenceCheck.dataset.evidenceCheck}/check-evidence`, 'POST', {});
+      renderAgreement();
+      notify('AI evidence insight is ready. Acceptance remains your decision.');
+    } catch (error) {
+      notify(error.message, true);
+      evidenceCheck.disabled = false;
+      evidenceCheck.textContent = '✦ Check evidence with AI';
+    }
+    return;
+  }
   const planAction = event.target.closest('button[data-plan]');
   if (planAction) {
     const action = planAction.dataset.plan;

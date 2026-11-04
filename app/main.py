@@ -13,16 +13,17 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .engine import detect, MetaResponseError
-from .conversation import analyze
+from .conversation import analyze, recover_explicit_deadline
 from .documents import approved_documents
 from . import storage as s
 from . import workflow as w
 from . import clarity as c
 from . import fulfilment
+from . import evidence
 
 s.initialize()
 logger = logging.getLogger(__name__)
-app = FastAPI(title="SamePage AI", version="1.0.0")
+app = FastAPI(title="SamePage AI", version="1.1.0")
 ROOT = Path(__file__).resolve().parents[1]
 app.mount("/static", StaticFiles(directory=ROOT / "web"), name="static")
 
@@ -149,9 +150,15 @@ class DeliveryPlanResponse(BaseModel):
     note: str = Field(default='', max_length=700)
 
 
+class ScreenshotPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    data: str = Field(min_length=20, max_length=2_700_000)
+
+
 class EvidenceSubmission(BaseModel):
     statement: str = Field(min_length=8, max_length=1500)
     reference: str = Field(default='', max_length=500)
+    screenshots: list[ScreenshotPayload] = Field(default_factory=list, max_length=2)
 
 
 class DeliveryItemDecision(BaseModel):
@@ -176,7 +183,7 @@ def authorize(row, token: str | None) -> str:
     raise HTTPException(403, "Invalid party access key")
 
 
-def conversation_view(db, case_id: str, version: int, revision: int):
+def conversation_view(db, case_id: str, version: int, revision: int, terms: dict | None = None):
     messages = [dict(r) for r in db.execute(
         "SELECT id, author, body, created_at FROM conversation_messages WHERE case_id=? ORDER BY rowid",
         (case_id,),
@@ -185,6 +192,9 @@ def conversation_view(db, case_id: str, version: int, revision: int):
         "SELECT * FROM conversation_reviews WHERE case_id=? ORDER BY rowid DESC LIMIT 1", (case_id,)
     ).fetchone()
     review = json.loads(saved["result_json"]) if saved else None
+    if (review and terms and messages and saved["base_version"] == version
+            and saved["base_revision"] == revision):
+        review = recover_explicit_deadline(review, messages[-1], terms)
     return {
         "messages": messages,
         "review": review,
@@ -226,7 +236,7 @@ def view(db, row, who: str):
         "history": [{"event": a["event"], "created_at": a["created_at"], "payload": json.loads(a["payload_json"])} for a in audits],
         "audit_valid": s.verify_chain(audits),
         "understanding": understanding,
-        "conversation": conversation_view(db, row["id"], row["version"], row["offer_revision"]),
+        "conversation": conversation_view(db, row["id"], row["version"], row["offer_revision"], json.loads(row["terms_json"])),
     }
 
 
@@ -583,9 +593,10 @@ def prepare_conversation_amendment(case_id: str, x_party_key: str | None = Heade
             raise HTTPException(409, "This review is outdated. Review the current conversation again")
         if review.get("last_author") != who or latest["author"] != who:
             raise HTTPException(403, "Only the person who proposed these terms can send them for approval")
+        original = json.loads(row["terms_json"])
+        review = recover_explicit_deadline(review, dict(latest), original)
         if review.get("intent") != "change_proposal" or not review.get("changes"):
             raise HTTPException(409, "The review contains no verified proposal")
-        original = json.loads(row["terms_json"])
         suggested = original.copy()
         seen = set()
         for item in review["changes"]:
@@ -735,6 +746,10 @@ def respond_delivery_plan(case_id: str, plan_id: str, payload: DeliveryPlanRespo
 @app.post('/api/cases/{case_id}/delivery-items/{item_id}/submit')
 def submit_delivery_item(case_id: str, item_id: str, payload: EvidenceSubmission,
                          x_party_key: str | None = Header(default=None)):
+    try:
+        prepared = evidence.prepare_images([image.model_dump() for image in payload.screenshots])
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     with s.connection() as db:
         db.execute('BEGIN IMMEDIATE')
         row=fetch(db,case_id); who=authorize(row,x_party_key)
@@ -751,12 +766,68 @@ def submit_delivery_item(case_id: str, item_id: str, payload: EvidenceSubmission
         if len(statement)<8:
             raise HTTPException(422,'Describe the completed work')
         reference=payload.reference.strip()
-        db.execute('UPDATE delivery_items SET status=?,statement=?,reference=?,submitted_at=?,reviewed_at=NULL,reviewer=NULL,review_note=NULL WHERE id=?',
-                   ('submitted',statement,reference or None,s.utcnow(),item_id))
+        submission_id=s.new_id()
+        saved=evidence.save_images(db,case_id,item_id,submission_id,prepared)
+        db.execute('UPDATE delivery_items SET status=?,statement=?,reference=?,submission_id=?,submitted_at=?,reviewed_at=NULL,reviewer=NULL,review_note=NULL WHERE id=?',
+                   ('submitted',statement,reference or None,submission_id,s.utcnow(),item_id))
         s.record(db,case_id,'deliverable_resubmitted' if item['status']=='disputed' else 'deliverable_submitted',
                  {'party':who,'item':item_id,'description':item['description'],'statement':statement,
-                  'reference':reference,'previous_review':item['review_note']})
+                  'reference':reference,'screenshot_evidence':saved,'previous_review':item['review_note']})
         return view(db,fetch(db,case_id),who)
+
+
+@app.get('/api/cases/{case_id}/evidence/{evidence_id}')
+def download_evidence(case_id: str, evidence_id: str, x_party_key: str | None = Header(default=None)):
+    with s.connection() as db:
+        row=fetch(db,case_id); authorize(row,x_party_key)
+        record=db.execute('SELECT filename FROM evidence_files WHERE case_id=? AND id=?',
+                          (case_id,evidence_id)).fetchone()
+        if not record: raise HTTPException(404,'Evidence not found')
+        image_path=evidence.private_dir()/record['filename']
+        if not image_path.is_file(): raise HTTPException(404,'Evidence file missing')
+    return FileResponse(image_path,media_type='image/jpeg',headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
+
+
+@app.post('/api/cases/{case_id}/delivery-items/{item_id}/check-evidence')
+def check_visual_evidence(case_id: str, item_id: str, x_party_key: str | None = Header(default=None)):
+    with s.connection() as db:
+        row=fetch(db,case_id); who=authorize(row,x_party_key)
+        if who==row['responsible_party']:
+            raise HTTPException(403,'Only the reviewing participant may check evidence')
+        plan=fulfilment.get_plan(db,case_id)
+        if not plan or plan['status']!='active' or plan['version']!=row['version']:
+            raise HTTPException(409,'A current delivery checklist is required')
+        item=next((item for item in plan['items'] if item['id']==item_id),None)
+        if not item or item['status']!='submitted':
+            raise HTTPException(409,'No submitted evidence awaiting review')
+        submission_id=item.get('submission_id')
+        files=evidence.images_for(db,item_id,submission_id)
+        if not files: raise HTTPException(409,'No screenshot attached to this submission')
+        cached=db.execute('SELECT result_json FROM evidence_reviews WHERE item_id=? AND submission_id=? ORDER BY rowid DESC LIMIT 1',
+                          (item_id,submission_id)).fetchone()
+        if cached: return view(db,row,who)
+        payload=(item['statement'],item['acceptance_criteria'],item['reference'] or '',files)
+    images=[]
+    try:
+        for record in payload[3]:
+            stored=evidence.private_dir()/(record['id']+'.jpg')
+            images.append((record['name'],stored.read_bytes()))
+        report=evidence.review_with_meta(images,*payload[:3])
+    except Exception as exc:
+        logger.warning('Visual evidence review unavailable: %s',type(exc).__name__)
+        raise HTTPException(503,conversation_error_message(exc)) from exc
+    with s.connection() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row=fetch(db,case_id); who=authorize(row,x_party_key)
+        item=db.execute('SELECT * FROM delivery_items WHERE id=?',(item_id,)).fetchone()
+        if not item or item['submission_id']!=submission_id or item['status']!='submitted':
+            raise HTTPException(409,'Evidence changed during review')
+        cached=db.execute('SELECT 1 FROM evidence_reviews WHERE item_id=? AND submission_id=?',(item_id,submission_id)).fetchone()
+        if not cached:
+            db.execute('INSERT INTO evidence_reviews(id,case_id,item_id,submission_id,result_json,created_at) VALUES(?,?,?,?,?,?)',
+                       (s.new_id(),case_id,item_id,submission_id,s.canon(report),s.utcnow()))
+            s.record(db,case_id,'evidence_ai_reviewed',{'item':item_id,'submission':submission_id,'mode':report['mode']})
+        return view(db,row,who)
 
 
 @app.post('/api/cases/{case_id}/delivery-items/{item_id}/review')

@@ -31,3 +31,9 @@ This is product differentiation, not proof that no competing service offers simi
 ## Before public deployment
 
 Add real authentication, expiring invitations, granular access controls, data retention controls, abuse protections, privacy review, event notifications and reliable backup/recovery. Do not claim legal enforceability, certified e-signatures, fraud prevention, or identity verification from the prototype.
+
+## Multi-message conversation review
+
+The conversation is attributed to participants by their private access tokens and saved separately from the official agreement. Muse Spark receives the last 12 chronological messages and the current terms only when a participant requests an analysis. Every displayed observation must quote an existing source message ID and an exact excerpt. Python independently validates source membership, price arithmetic, explicit versus conditional wording, and whether a review is stale relative to the last message and current offer. No model output can modify the approved agreement.
+
+The product hypothesis is that a shared, attributed negotiation record with enforceable approvals is more useful than a stand-alone chat summary. The included scenarios are an initial evaluation fixture, not a real-world accuracy estimate.

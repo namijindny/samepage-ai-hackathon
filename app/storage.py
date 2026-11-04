@@ -6,9 +6,10 @@ import os
 import secrets
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 BASE = Path(__file__).resolve().parents[1]
 DB = Path(os.environ.get("SAMEPAGE_DB", str(BASE / "data" / "samepage.sqlite3")))
@@ -22,13 +23,18 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def connection() -> sqlite3.Connection:
+@contextmanager
+def connection() -> Iterator[sqlite3.Connection]:
     DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=10000")
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=10000")
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def initialize():
@@ -94,6 +100,26 @@ def initialize():
             )
         """)
         db.execute("""
+            CREATE TABLE IF NOT EXISTS conversation_messages (
+                id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL REFERENCES cases(id),
+                author TEXT NOT NULL CHECK(author IN ('a','b')),
+                body TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS conversation_reviews (
+                id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL REFERENCES cases(id),
+                last_message_id TEXT NOT NULL REFERENCES conversation_messages(id),
+                base_version INTEGER NOT NULL,
+                base_revision INTEGER NOT NULL DEFAULT 0,
+                result_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        db.execute("""
             CREATE TABLE IF NOT EXISTS completion (
                 case_id TEXT PRIMARY KEY REFERENCES cases(id),
                 version INTEGER NOT NULL,
@@ -107,6 +133,10 @@ def initialize():
                 review_note TEXT
             )
         """)
+        from . import fulfilment
+        fulfilment.initialize(db)
+        from . import evidence
+        evidence.initialize(db)
 
 
 def new_id() -> str:
