@@ -465,7 +465,7 @@ function renderChecklist() {
   if (!plan || plan.status === 'rejected') {
     const previous = plan?.status === 'rejected' ? `<p class="delivery-outcome">The earlier checklist was declined: ${escapeHtml(plan.review_note || 'Please revise the checklist.')}</p>` : '';
     return `${intro}${previous}<form id="plan-form" class="nested-form">
-      <p class="muted-copy">Agree on what must be delivered before work is marked complete. Both people must approve this checklist.</p>
+      <p class="muted-copy">Agree on what must be delivered before work is marked complete. Both people must approve this checklist. Screenshots are attached later, when the responsible person submits each finished item.</p>
       <div id="plan-items">
         <div class="deliverable-fields">
           <label>Deliverable<input name="description" required minlength="5" maxlength="250" placeholder="e.g. Complete the website homepage"></label>
@@ -604,6 +604,7 @@ function renderConversation() {
     <div class="review-term"><span>${escapeHtml(fieldNames[field] || field)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
   const approveAction = canDraft ? `<details class="review-action">
       <summary>Prepare an amendment</summary>
+      ${review.confirmed_prior_offer ? '<p class="muted-copy">Suggested from a quoted price condition and a follow-up confirmation. Check the price carefully; a chat reply alone does not change the agreement.</p>' : ''}
       <p class="muted-copy">Check all the terms before sending. By sending this proposal, you approve the suggested change. The other person must approve it before it takes effect.</p>
       <div class="review-terms">${termsPreview}</div>
       <button class="button button-primary" type="button" id="send-conversation-change">Send for approval</button>
@@ -611,7 +612,7 @@ function renderConversation() {
   elements.conversationResult.innerHTML = `<div class="conversation-review-title"><strong>Conversation review</strong><span>${current ? 'Current' : 'Earlier review'}</span></div>
     <p class="muted-copy">${current ? 'Only statements linked to the messages below are shown. Review interpretations before acting.' : 'New messages were added since this review. Run it again for an updated assessment.'}</p>
     ${observations || '<p class="muted-copy">No source-linked observations returned.</p>'}
-    ${changes ? `<h3>Possible changes in the latest message</h3>${changes}` : '<p class="muted-copy">No verified new amendment in the latest message.</p>'}
+    ${changes ? `<h3>${review.confirmed_prior_offer ? 'Price discussed and confirmed in conversation' : 'Possible changes in the latest message'}</h3>${changes}` : '<p class="muted-copy">No verified new amendment in the latest message. You can still propose updated terms without AI below.</p>'}
     ${approveAction}
     ${pendingChange && current && review.changes?.length ? '<p class="conversation-safety">An amendment is already awaiting a response. Review it in Changes.</p>' : ''}
     <p class="conversation-safety">The approved agreement stays unchanged until both people explicitly approve an amendment.</p>`;

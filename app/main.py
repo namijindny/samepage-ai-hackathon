@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .engine import detect, MetaResponseError
-from .conversation import analyze, recover_explicit_deadline
+from .conversation import analyze, recover_explicit_deadline, recover_confirmed_price
 from .documents import approved_documents
 from . import storage as s
 from . import workflow as w
@@ -23,7 +23,7 @@ from . import evidence
 
 s.initialize()
 logger = logging.getLogger(__name__)
-app = FastAPI(title="SamePage AI", version="1.1.0")
+app = FastAPI(title="SamePage AI", version="1.1.1")
 ROOT = Path(__file__).resolve().parents[1]
 app.mount("/static", StaticFiles(directory=ROOT / "web"), name="static")
 
@@ -195,6 +195,8 @@ def conversation_view(db, case_id: str, version: int, revision: int, terms: dict
     if (review and terms and messages and saved["base_version"] == version
             and saved["base_revision"] == revision):
         review = recover_explicit_deadline(review, messages[-1], terms)
+        if len(messages) >= 2:
+            review = recover_confirmed_price(review, messages[-2], messages[-1], terms)
     return {
         "messages": messages,
         "review": review,
@@ -595,29 +597,47 @@ def prepare_conversation_amendment(case_id: str, x_party_key: str | None = Heade
             raise HTTPException(403, "Only the person who proposed these terms can send them for approval")
         original = json.loads(row["terms_json"])
         review = recover_explicit_deadline(review, dict(latest), original)
+        previous_row = db.execute(
+            "SELECT id, author, body FROM conversation_messages WHERE case_id=? "
+            "ORDER BY rowid DESC LIMIT 2", (case_id,)
+        ).fetchall()
+        previous = dict(previous_row[1]) if len(previous_row) > 1 else None
+        review = recover_confirmed_price(review, previous, dict(latest), original)
         if review.get("intent") != "change_proposal" or not review.get("changes"):
             raise HTTPException(409, "The review contains no verified proposal")
         suggested = original.copy()
         seen = set()
+        source_ids = {}
         for item in review["changes"]:
             field = item.get("field")
-            evidence = item.get("evidence", "")
-            if field not in w.FIELDS or field in seen or not evidence or evidence not in latest["body"]:
+            quote = item.get("evidence", "")
+            source_id = item.get("source_message_id", latest["id"])
+            # Prior-message evidence is permitted only after the strict,
+            # revalidated two-turn confirmation recovery above.
+            from_prior = (review.get("confirmed_prior_offer") is True
+                          and field == "price" and previous and source_id == previous["id"])
+            source_body = previous["body"] if from_prior else latest["body"] if source_id == latest["id"] else None
+            if field not in w.FIELDS or field in seen or not quote or not source_body or quote not in source_body:
                 raise HTTPException(409, "The proposal evidence could not be verified")
             seen.add(field)
+            source_ids[field] = source_id
             suggested[field] = item["new_value"]
         suggested = w.clean_terms(suggested)
         changes = w.changes_between(original, suggested)
+        if not changes:
+            raise HTTPException(409, "There are no new terms to propose")
         for change in changes:
             change["evidence"] = next(
                 item["evidence"] for item in review["changes"] if item["field"] == change["field"]
             )
-            change["message_id"] = latest["id"]
+            change["message_id"] = source_ids[change["field"]]
         proposal_id = s.new_id()
         db.execute(
             "INSERT INTO proposals(id,case_id,base_version,author,source_text,changes_json,mode,a_approved,b_approved,created_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (proposal_id, case_id, row["version"], who, latest["body"], s.canon(changes),
+            (proposal_id, case_id, row["version"], who,
+             (previous["body"] + "\n" + latest["body"]) if review.get("confirmed_prior_offer") else latest["body"],
+             s.canon(changes),
              "meta_conversation", int(who == "a"), int(who == "b"), s.utcnow()),
         )
         s.record(db, case_id, "change_proposed", {

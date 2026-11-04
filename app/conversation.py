@@ -158,6 +158,77 @@ def recover_explicit_deadline(review: dict, latest: dict, current: dict) -> dict
     return recovered
 
 
+
+# A short acknowledgement can confirm a specific, immediately preceding price
+# condition without constituting a legal or application-level approval. This is
+# a suggestion only; the other participant must approve the new amendment.
+_SIMPLE_CONFIRMATION = re.compile(r"\s*(?:i agree|i accept|agreed|accepted|sounds good)[.!]?\s*", re.IGNORECASE)
+_CURRENCY_AMOUNT = r"(?:\$|USD\s*|₦|NGN\s*|£|GBP\s*|€|EUR\s*)\s*[\d,]+(?:\.00)?"
+_CONDITIONAL_TOTAL_PRICE = re.compile(
+    r"\b(?:the\s+)?(?:price|total\s+price|cost|fee|total)\s+"
+    r"(?:(?:will|would|must|should)\s+)?(?:(?:then|now)\s+)?"
+    r"(?:be|become)\s+(?P<amount>" + _CURRENCY_AMOUNT + r")(?=\W|$)",
+    re.IGNORECASE,
+)
+_ALL_AMOUNTS = re.compile(_CURRENCY_AMOUNT, re.IGNORECASE)
+
+
+def recover_confirmed_price(review: dict, previous: dict | None, latest: dict, current: dict) -> dict:
+    """Recognize a directly confirmed price condition from saved, quoted AI observations.
+
+    Not an automatic approval. Require adjacent opposing speakers, a bare
+    confirmation, one explicit total price, and two authenticated source quotes.
+    This never calls Meta, changes a contract, or infers non-price scope terms.
+    """
+    if (not previous or review.get("changes") or review.get("intent") != "no_change"
+            or review.get("last_message_id") != latest.get("id")
+            or review.get("last_author") != latest.get("author")
+            or previous.get("author") == latest.get("author")
+            or not _SIMPLE_CONFIRMATION.fullmatch(latest.get("body", ""))):
+        return review
+    prior_body = str(previous.get("body", ""))
+    if "?" in prior_body or re.search(r"\b(?:withdraw|retract|cancel|not agreed)\b", prior_body, re.I):
+        return review
+    matches = list(_CONDITIONAL_TOTAL_PRICE.finditer(prior_body))
+    amounts = list(_ALL_AMOUNTS.finditer(prior_body))
+    if len(matches) != 1 or len(amounts) != 1:
+        return review
+    from .engine import _money
+    old = _money(str(current.get("price", "")))
+    new = _money(matches[0].group("amount"))
+    if not old or not new or old[0] != new[0] or old[1] == new[1]:
+        return review
+    observations = review.get("observations", [])
+    prior_quote = next((str(item.get("quote", "")) for item in observations
+                        if item.get("message_id") == previous["id"]
+                        and item.get("kind") in ("condition", "proposal")
+                        and str(item.get("quote", "")) in prior_body
+                        and matches[0].group("amount") in str(item.get("quote", ""))
+                        and _CONDITIONAL_TOTAL_PRICE.search(str(item.get("quote", "")))), None)
+    confirmed = any(item.get("message_id") == latest["id"]
+                    and item.get("kind") == "confirmation"
+                    and str(item.get("quote", "")).strip()
+                    and str(item["quote"]) in latest["body"]
+                    for item in observations)
+    if not prior_quote or not confirmed:
+        return review
+    finding = validate_response({
+        "intent": "change_proposal",
+        "explanation": "A quoted price condition was followed by a direct confirmation. Both people must still approve the amendment.",
+        "changes": [{"field": "price", "new_value": f"{new[0]}{new[1]:,}",
+                     "evidence": prior_quote, "operation": "replace", "certainty": "explicit"}],
+    }, prior_body, current)
+    if finding.intent != "change_proposal" or not finding.changes:
+        return review
+    recovered = dict(review)
+    recovered.update({"intent": "change_proposal",
+                      "changes": [{**change, "source_message_id": previous["id"]} for change in finding.changes],
+                      "explanation": finding.explanation,
+                      "confirmed_prior_offer": True,
+                      "confirmation_message_id": latest["id"]})
+    return recovered
+
+
 def validate_review(data: dict, messages: list[dict], current: dict) -> dict:
     if not isinstance(data, dict) or not messages:
         raise ValueError("Invalid conversation review")
